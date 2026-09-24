@@ -1,6 +1,11 @@
+using EcoBilling.Control.Api.Endpoints.Public;
+using EcoBilling.Control.Api.Extensions;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+builder.Services.AddApplicationHandlers();
+builder.Services.AddTemporaryInMemoryPersistence();
 
 var app = builder.Build();
 
@@ -13,6 +18,8 @@ app.UseHttpsRedirection();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }))
     .WithName("Health");
+
+app.MapResolveDistrict();
 
 app.Run();
 

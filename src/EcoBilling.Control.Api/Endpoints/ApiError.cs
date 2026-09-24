@@ -1,0 +1,37 @@
+using EcoBilling.Control.Domain.Common;
+
+namespace EcoBilling.Control.Api.Endpoints;
+
+/// <summary>
+/// Maps a domain <see cref="Error"/> to the client-facing error envelope: code, message
+/// and traceId (architecture doc, section 20).
+/// </summary>
+/// <remarks>
+/// Scoped to the error codes ResolveDistrict can actually produce. As more scenarios
+/// reach the Api layer with their own error codes, either this table grows or it gets
+/// promoted to shared Problem Details middleware -- whichever stops duplication first.
+/// An error code this table does not recognize maps to 500: an error the Api layer
+/// cannot classify is a server-side bug, not something to blame on the client.
+/// </remarks>
+public static class ApiError
+{
+    private static readonly Dictionary<string, int> StatusCodesByErrorCode = new(StringComparer.Ordinal)
+    {
+        ["district.invalid_code"] = StatusCodes.Status400BadRequest,
+        ["validation.failed"] = StatusCodes.Status400BadRequest,
+        ["district.not_found"] = StatusCodes.Status404NotFound,
+        ["district.inactive"] = StatusCodes.Status404NotFound,
+    };
+
+    public static IResult ToResult(Error error, HttpContext httpContext)
+    {
+        var statusCode = StatusCodesByErrorCode.GetValueOrDefault(error.Code, StatusCodes.Status500InternalServerError);
+
+        return Results.Json(
+            new ApiErrorResponse(error.Code, error.Message, httpContext.TraceIdentifier),
+            statusCode: statusCode);
+    }
+}
+
+/// <summary>The error envelope every Control endpoint returns on failure.</summary>
+public sealed record ApiErrorResponse(string Code, string Message, string TraceId);
