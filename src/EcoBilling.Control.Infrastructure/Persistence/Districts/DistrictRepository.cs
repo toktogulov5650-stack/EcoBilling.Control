@@ -11,4 +11,13 @@ public sealed class DistrictRepository(ControlDbContext dbContext) : IDistrictRe
         dbContext.Districts
             .AsNoTracking() // ResolveDistrict is a high-frequency read path (doc, section 17.1); nothing here is ever updated through this query.
             .SingleOrDefaultAsync(d => d.NormalizedCode == normalizedCode, cancellationToken);
+
+    public Task<District?> GetByIdAsync(DistrictId id, CancellationToken cancellationToken) =>
+        dbContext.Districts
+            // Tracked (no AsNoTracking): callers mutate the returned entity through its
+            // own methods and persist via IUnitOfWork.SaveChangesAsync, with no separate
+            // update call.
+            .SingleOrDefaultAsync(d => d.Id == id, cancellationToken);
+
+    public void Add(District district) => dbContext.Districts.Add(district);
 }

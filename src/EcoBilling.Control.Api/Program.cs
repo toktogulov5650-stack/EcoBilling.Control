@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi();
 builder.Services.AddApplicationHandlers();
 builder.Services.AddPersistence(builder.Configuration);
+builder.Services.AddDistrictHostAllowlist(builder.Configuration);
 
 var app = builder.Build();
 

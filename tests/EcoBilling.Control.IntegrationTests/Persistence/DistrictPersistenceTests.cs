@@ -34,7 +34,9 @@ public sealed class DistrictPersistenceTests(DatabaseFixture database)
 
         var applied = await dbContext.Database.GetAppliedMigrationsAsync();
 
-        Assert.Contains("InitialCreate", applied);
+        // Applied migration ids carry their timestamp prefix (e.g. "20260924104959_InitialCreate"),
+        // so this checks for that suffix rather than an exact name match.
+        Assert.Contains(applied, id => id.EndsWith("InitialCreate", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -106,5 +108,83 @@ public sealed class DistrictPersistenceTests(DatabaseFixture database)
 
         Assert.NotNull(found);
         Assert.False(found.IsActive);
+    }
+
+    [Fact]
+    public async Task Repository_Add_ThenGetByNormalizedCode_FindsTheCreatedDistrict()
+    {
+        // The full CreateDistrict write path: Add() stages the entity, nothing reaches
+        // Postgres until SaveChangesAsync -- exercised here through the repository
+        // itself, not by reaching into the DbContext directly as the earlier tests do.
+        var district = NewDistrict("BISHKEK-12", "https://district-12.example.com/api");
+
+        await using var writeContext = database.CreateDbContext();
+        new DistrictRepository(writeContext).Add(district);
+        await writeContext.SaveChangesAsync();
+
+        await using var readContext = database.CreateDbContext();
+        var found = await new DistrictRepository(readContext).GetByNormalizedCodeAsync("BISHKEK-12", CancellationToken.None);
+
+        Assert.NotNull(found);
+        Assert.Equal(district.Id, found.Id);
+    }
+
+    [Fact]
+    public async Task Repository_GetByIdAsync_FindsTheSeededDistrict()
+    {
+        var district = NewDistrict("BISHKEK-13");
+
+        await using var writeContext = database.CreateDbContext();
+        writeContext.Districts.Add(district);
+        await writeContext.SaveChangesAsync();
+
+        await using var readContext = database.CreateDbContext();
+        var found = await new DistrictRepository(readContext).GetByIdAsync(district.Id, CancellationToken.None);
+
+        Assert.NotNull(found);
+        Assert.Equal("BISHKEK-13", found.NormalizedCode);
+    }
+
+    [Fact]
+    public async Task Repository_GetByIdAsync_ReturnsNullForAnUnknownId()
+    {
+        await using var readContext = database.CreateDbContext();
+
+        var found = await new DistrictRepository(readContext).GetByIdAsync(DistrictId.New(), CancellationToken.None);
+
+        Assert.Null(found);
+    }
+
+    [Fact]
+    public async Task MutatingATrackedDistrict_ThenSavingChanges_PersistsTheChange()
+    {
+        // This is the assumption UpdateDistrict, ActivateDistrict and DeactivateDistrict
+        // (Stage 5) all lean on: District's properties have only private setters and one
+        // (ApiBaseUrl) is a value-object-backed conversion, yet EF Core's snapshot change
+        // tracking must still detect and persist a mutation made purely through the
+        // aggregate's own methods, with no explicit "Update" call. Proven here against
+        // real Postgres, not assumed.
+        var district = NewDistrict("BISHKEK-14", "https://district-14.example.com/api");
+
+        await using var writeContext = database.CreateDbContext();
+        writeContext.Districts.Add(district);
+        await writeContext.SaveChangesAsync();
+
+        await using var mutateContext = database.CreateDbContext();
+        var tracked = await new DistrictRepository(mutateContext).GetByIdAsync(district.Id, CancellationToken.None);
+        Assert.NotNull(tracked);
+        var activatedAt = DateTimeOffset.UtcNow;
+        tracked.Activate(activatedAt);
+        tracked.Rename("Renamed district", activatedAt);
+        tracked.ChangeApiBaseUrl(TrustedApiUrl.Create("https://district-14-new.example.com/api").Value, activatedAt);
+        await mutateContext.SaveChangesAsync(); // no repository.Update(...) call -- none exists.
+
+        await using var readContext = database.CreateDbContext();
+        var reloaded = await new DistrictRepository(readContext).GetByIdAsync(district.Id, CancellationToken.None);
+
+        Assert.NotNull(reloaded);
+        Assert.True(reloaded.IsActive);
+        Assert.Equal("Renamed district", reloaded.Name);
+        Assert.Equal("https://district-14-new.example.com/api", reloaded.ApiBaseUrl.ToString());
     }
 }

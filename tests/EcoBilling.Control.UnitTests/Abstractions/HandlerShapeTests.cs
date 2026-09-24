@@ -1,6 +1,7 @@
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Domain.Common;
 using EcoBilling.Control.Domain.Districts;
+using EcoBilling.Control.UnitTests.TestDoubles;
 
 namespace EcoBilling.Control.UnitTests.Abstractions;
 
@@ -50,11 +51,6 @@ public sealed class HandlerShapeTests
         Assert.Equal("test.failed", result.Error.Code);
     }
 
-    private sealed class FixedClock(DateTimeOffset now) : IClock
-    {
-        public DateTimeOffset UtcNow { get; } = now;
-    }
-
     private sealed record BumpByYear(int Amount) : ICommand<int>;
 
     private sealed class BumpByYearHandler(IClock clock) : ICommandHandler<BumpByYear, int>
@@ -82,16 +78,6 @@ public sealed class HandlerShapeTests
         Assert.Equal(default, Unit.Value);
     }
 
-    private sealed class InMemoryDistrictRepository : IDistrictRepository
-    {
-        private readonly Dictionary<string, District> _byNormalizedCode = new(StringComparer.Ordinal);
-
-        public void Seed(District district) => _byNormalizedCode[district.NormalizedCode] = district;
-
-        public Task<District?> GetByNormalizedCodeAsync(string normalizedCode, CancellationToken cancellationToken) =>
-            Task.FromResult(_byNormalizedCode.GetValueOrDefault(normalizedCode));
-    }
-
     private static District CreateDistrict(string code) =>
         District.Create(
             DistrictId.New(),
@@ -103,7 +89,7 @@ public sealed class HandlerShapeTests
     [Fact]
     public async Task DistrictRepository_ReturnsTheSeededDistrictByItsNormalizedCode()
     {
-        var repository = new InMemoryDistrictRepository();
+        var repository = new FakeDistrictRepository();
         var district = CreateDistrict("BISHKEK-01");
         repository.Seed(district);
 
@@ -115,7 +101,7 @@ public sealed class HandlerShapeTests
     [Fact]
     public async Task DistrictRepository_ReturnsNullForAnUnknownCode()
     {
-        var repository = new InMemoryDistrictRepository();
+        var repository = new FakeDistrictRepository();
 
         var found = await repository.GetByNormalizedCodeAsync("OSH-01", CancellationToken.None);
 
@@ -128,7 +114,7 @@ public sealed class HandlerShapeTests
         // The repository must return an inactive district rather than filtering it out,
         // so the calling scenario can distinguish district.not_found from
         // district.inactive itself.
-        var repository = new InMemoryDistrictRepository();
+        var repository = new FakeDistrictRepository();
         var district = CreateDistrict("BISHKEK-01");
         repository.Seed(district);
 

@@ -1,21 +1,11 @@
-using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Districts.ResolveDistrict;
 using EcoBilling.Control.Domain.Districts;
+using EcoBilling.Control.UnitTests.TestDoubles;
 
 namespace EcoBilling.Control.UnitTests.Districts.ResolveDistrict;
 
 public sealed class ResolveDistrictHandlerTests
 {
-    private sealed class FakeDistrictRepository : IDistrictRepository
-    {
-        private readonly Dictionary<string, District> _byNormalizedCode = new(StringComparer.Ordinal);
-
-        public void Seed(District district) => _byNormalizedCode[district.NormalizedCode] = district;
-
-        public Task<District?> GetByNormalizedCodeAsync(string normalizedCode, CancellationToken cancellationToken) =>
-            Task.FromResult(_byNormalizedCode.GetValueOrDefault(normalizedCode));
-    }
-
     private static District ActiveDistrict(
         string code = "BISHKEK-01",
         string apiBaseUrl = "https://district-01.example.com/api")

@@ -1,5 +1,11 @@
 using EcoBilling.Control.Application.Abstractions;
+using EcoBilling.Control.Application.Districts.ActivateDistrict;
+using EcoBilling.Control.Application.Districts.CreateDistrict;
+using EcoBilling.Control.Application.Districts.DeactivateDistrict;
 using EcoBilling.Control.Application.Districts.ResolveDistrict;
+using EcoBilling.Control.Application.Districts.UpdateDistrict;
+using EcoBilling.Control.Infrastructure;
+using EcoBilling.Control.Infrastructure.Districts;
 using EcoBilling.Control.Infrastructure.Persistence;
 using EcoBilling.Control.Infrastructure.Persistence.Districts;
 using Microsoft.EntityFrameworkCore;
@@ -12,6 +18,11 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddApplicationHandlers(this IServiceCollection services)
     {
         services.AddScoped<IQueryHandler<ResolveDistrictQuery, ResolveDistrictResult>, ResolveDistrictHandler>();
+        services.AddScoped<ICommandHandler<CreateDistrictCommand, CreateDistrictResult>, CreateDistrictHandler>();
+        services.AddScoped<ICommandHandler<UpdateDistrictCommand, Unit>, UpdateDistrictHandler>();
+        services.AddScoped<ICommandHandler<ActivateDistrictCommand, Unit>, ActivateDistrictHandler>();
+        services.AddScoped<ICommandHandler<DeactivateDistrictCommand, Unit>, DeactivateDistrictHandler>();
+        services.AddSingleton<IClock, SystemClock>();
 
         return services;
     }
@@ -28,6 +39,15 @@ public static class ServiceCollectionExtensions
         services.AddDbContext<ControlDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<IDistrictRepository, DistrictRepository>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+
+        return services;
+    }
+
+    /// <summary>Registers the configured district host allowlist (Q18).</summary>
+    public static IServiceCollection AddDistrictHostAllowlist(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<DistrictHostAllowlistOptions>(configuration.GetSection(DistrictHostAllowlistOptions.SectionName));
+        services.AddSingleton<IDistrictHostAllowlist, DistrictHostAllowlist>();
 
         return services;
     }

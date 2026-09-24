@@ -15,7 +15,7 @@ public static class DistrictErrors
 
     public static readonly Error NotFound = new(
         "district.not_found",
-        "No district matches the supplied code.");
+        "No district matches the supplied identifier.");
 
     public static readonly Error Inactive = new(
         "district.inactive",
@@ -39,4 +39,13 @@ public static class DistrictErrors
     public static readonly Error AlreadyInactive = new(
         "district.invalid_status_transition",
         "The district is already inactive.");
+
+    // Added at Stage 5, together with the configured host allowlist (Q18): the district's
+    // ApiBaseUrl is structurally valid (TrustedApiUrl's own checks passed) but its host is
+    // not on the deployment's approved list. Distinct from InvalidUrl on purpose -- these
+    // are different remediation paths for an administrator: a malformed URL is a typo,
+    // a disallowed host is a request to add that host to the deployment's configuration.
+    public static readonly Error HostNotAllowed = new(
+        "district.host_not_allowed",
+        "The district API address is not on the configured list of allowed hosts.");
 }
