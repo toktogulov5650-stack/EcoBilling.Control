@@ -1,5 +1,8 @@
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Districts.ResolveDistrict;
+using EcoBilling.Control.Infrastructure.Persistence;
+using EcoBilling.Control.Infrastructure.Persistence.Districts;
+using Microsoft.EntityFrameworkCore;
 
 namespace EcoBilling.Control.Api.Extensions;
 
@@ -13,15 +16,18 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>
-    /// TEMPORARY. Registers <see cref="TemporaryInMemoryDistrictRepository"/> in place of
-    /// the real persistence Stage 4 introduces. Remove this method and its call site in
-    /// <c>Program.cs</c> once that repository exists.
-    /// </summary>
-    public static IServiceCollection AddTemporaryInMemoryPersistence(this IServiceCollection services)
+    /// <summary>Registers <see cref="ControlDbContext"/> and its PostgreSQL-backed repositories.</summary>
+    public static IServiceCollection AddPersistence(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddSingleton<TemporaryInMemoryDistrictRepository>();
-        services.AddSingleton<IDistrictRepository>(sp => sp.GetRequiredService<TemporaryInMemoryDistrictRepository>());
+        var connectionString = configuration.GetConnectionString("Database")
+            ?? throw new InvalidOperationException(
+                "Missing required connection string 'ConnectionStrings:Database'. " +
+                "Set it via configuration or the ConnectionStrings__Database environment variable; " +
+                "never commit a real one to appsettings.json.");
+
+        services.AddDbContext<ControlDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddScoped<IDistrictRepository, DistrictRepository>();
+        services.AddScoped<IUnitOfWork, EfUnitOfWork>();
 
         return services;
     }

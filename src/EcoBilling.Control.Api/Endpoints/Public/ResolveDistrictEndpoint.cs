@@ -33,8 +33,21 @@ public static class ResolveDistrictEndpoint
 
         var value = result.Value;
 
-        return Results.Ok(new ResolveDistrictResponse(value.DistrictCode, value.ApiBaseUrl, value.ExpiresInSeconds));
+        return Results.Ok(new ResolveDistrictResponse(
+            value.DistrictCode,
+            WithoutRedundantRootSlash(value.ApiBaseUrl),
+            value.ExpiresInSeconds));
     }
+
+    // Bare-host addresses (no path) canonicalize with a trailing "/" -- .NET's Uri class
+    // always includes a root path, and this is correct, already-tested behavior in
+    // TrustedApiUrl (Stage 1) that must not change. Stripped only here, at the wire
+    // boundary: a client that naively concatenates its own path onto this value
+    // ("apiBaseUrl + \"/internal/v1/...\"") would otherwise end up with "host//path".
+    private static string WithoutRedundantRootSlash(string apiBaseUrl) =>
+        Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out var uri) && uri.AbsolutePath == "/"
+            ? apiBaseUrl[..^1]
+            : apiBaseUrl;
 }
 
 /// <summary>Request body for <see cref="ResolveDistrictEndpoint"/>.</summary>

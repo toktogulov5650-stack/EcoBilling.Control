@@ -2,25 +2,43 @@ using System.Net;
 using System.Net.Http.Json;
 using EcoBilling.Control.Api.Endpoints;
 using EcoBilling.Control.Api.Endpoints.Public;
-using EcoBilling.Control.Api.Extensions;
 using EcoBilling.Control.Domain.Districts;
+using EcoBilling.Control.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace EcoBilling.Control.EndToEndTests;
 
 /// <summary>
-/// Exercises <c>POST /api/v1/districts/resolve</c> over real HTTP, against the temporary
-/// in-memory repository (see <see cref="TemporaryInMemoryDistrictRepository"/>). Seeding
-/// happens by resolving that repository from the test host's DI container directly,
-/// because there is no CreateDistrict endpoint yet (Stage 5) to seed data through HTTP.
+/// Exercises <c>POST /api/v1/districts/resolve</c> over real HTTP, against a real
+/// PostgreSQL database (see <see cref="DatabaseFixture"/>).
 /// </summary>
+/// <remarks>
+/// Every test uses its own, never-reused district code: the fixture's database is shared
+/// across the whole test run (a fresh container per test would be needlessly slow), and
+/// tests within one class already run sequentially by xUnit's default -- but a repeated
+/// code would still collide with a row a previous test left behind, since nothing here
+/// truncates the table between tests. Distinct codes side-step that without needing a
+/// reset step.
+/// </remarks>
+[Collection(DatabaseCollection.Name)]
 public sealed class ResolveDistrictEndpointTests : IDisposable
 {
-    private readonly WebApplicationFactory<Program> _factory = new();
+    private readonly WebApplicationFactory<Program> _factory;
 
-    private void Seed(District district) =>
-        _factory.Services.GetRequiredService<TemporaryInMemoryDistrictRepository>().Seed(district);
+    public ResolveDistrictEndpointTests(DatabaseFixture database)
+    {
+        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+            builder.UseSetting("ConnectionStrings:Database", database.ConnectionString));
+    }
+
+    private async Task SeedAsync(District district)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
+        dbContext.Districts.Add(district);
+        await dbContext.SaveChangesAsync();
+    }
 
     private static District ActiveDistrict(string code, string apiBaseUrl)
     {
@@ -39,7 +57,7 @@ public sealed class ResolveDistrictEndpointTests : IDisposable
     [Fact]
     public async Task Resolve_ReturnsTheAddress_ForAnActiveDistrict()
     {
-        Seed(ActiveDistrict("BISHKEK-01", "https://district-01.example.com/api"));
+        await SeedAsync(ActiveDistrict("BISHKEK-01", "https://district-01.example.com/api"));
         var client = _factory.CreateClient();
 
         var response = await client.PostAsJsonAsync(
@@ -55,14 +73,33 @@ public sealed class ResolveDistrictEndpointTests : IDisposable
     }
 
     [Fact]
-    public async Task Resolve_NormalizesTheCodeBeforeLookup()
+    public async Task Resolve_StripsTheRedundantRootSlash_ForABareHostDistrict()
     {
-        Seed(ActiveDistrict("BISHKEK-01", "https://district-01.example.com/api"));
+        // TrustedApiUrl correctly (and deliberately, per its Stage 1 tests) canonicalizes
+        // a bare-host address to include a trailing "/". The wire response must not
+        // repeat that slash, or a client appending its own path would get "host//path".
+        await SeedAsync(ActiveDistrict("OSH-01", "https://district-02.example.com"));
         var client = _factory.CreateClient();
 
         var response = await client.PostAsJsonAsync(
             "/api/v1/districts/resolve",
-            new ResolveDistrictRequest("  bishkek-01  "));
+            new ResolveDistrictRequest("OSH-01"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ResolveDistrictResponse>();
+        Assert.NotNull(body);
+        Assert.Equal("https://district-02.example.com", body.ApiBaseUrl);
+    }
+
+    [Fact]
+    public async Task Resolve_NormalizesTheCodeBeforeLookup()
+    {
+        await SeedAsync(ActiveDistrict("BISHKEK-02", "https://district-03.example.com/api"));
+        var client = _factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/v1/districts/resolve",
+            new ResolveDistrictRequest("  bishkek-02  "));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -74,7 +111,7 @@ public sealed class ResolveDistrictEndpointTests : IDisposable
 
         var response = await client.PostAsJsonAsync(
             "/api/v1/districts/resolve",
-            new ResolveDistrictRequest("OSH-01"));
+            new ResolveDistrictRequest("UNKNOWN-99"));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
@@ -88,16 +125,16 @@ public sealed class ResolveDistrictEndpointTests : IDisposable
     {
         var district = District.Create(
             DistrictId.New(),
-            DistrictCode.Create("BISHKEK-01").Value,
+            DistrictCode.Create("BISHKEK-03").Value,
             "Test district",
-            TrustedApiUrl.Create("https://district-01.example.com/api").Value,
+            TrustedApiUrl.Create("https://district-04.example.com/api").Value,
             DateTimeOffset.UtcNow).Value;
-        Seed(district); // never activated
+        await SeedAsync(district); // never activated
         var client = _factory.CreateClient();
 
         var response = await client.PostAsJsonAsync(
             "/api/v1/districts/resolve",
-            new ResolveDistrictRequest("BISHKEK-01"));
+            new ResolveDistrictRequest("BISHKEK-03"));
 
         // Same HTTP status as an unknown code -- only the body's error code differs.
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -127,12 +164,12 @@ public sealed class ResolveDistrictEndpointTests : IDisposable
     [Fact]
     public async Task Resolve_DoesNotExposeDistrictIdOrDistrictNameInTheResponse()
     {
-        Seed(ActiveDistrict("BISHKEK-01", "https://district-01.example.com/api"));
+        await SeedAsync(ActiveDistrict("BISHKEK-04", "https://district-05.example.com/api"));
         var client = _factory.CreateClient();
 
         var response = await client.PostAsJsonAsync(
             "/api/v1/districts/resolve",
-            new ResolveDistrictRequest("BISHKEK-01"));
+            new ResolveDistrictRequest("BISHKEK-04"));
 
         var raw = await response.Content.ReadAsStringAsync();
         Assert.DoesNotContain("districtId", raw, StringComparison.OrdinalIgnoreCase);

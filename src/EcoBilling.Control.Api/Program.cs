@@ -5,7 +5,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
 builder.Services.AddApplicationHandlers();
-builder.Services.AddTemporaryInMemoryPersistence();
+builder.Services.AddPersistence(builder.Configuration);
 
 var app = builder.Build();
 

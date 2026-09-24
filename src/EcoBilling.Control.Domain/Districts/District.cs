@@ -27,17 +27,32 @@ public sealed class District
         UpdatedAt = createdAt;
     }
 
+    /// <summary>
+    /// For EF Core materialization only (Stage 4). Never called by application code --
+    /// it is private, and nothing outside this class can reach it. EF Core populates
+    /// every property directly through its backing field when reading a row, bypassing
+    /// this constructor's (empty) body entirely.
+    /// </summary>
+    private District()
+    {
+        // The `= null!` defaults below exist only to satisfy the nullable-reference
+        // analyzer for this constructor; EF Core overwrites every field before the
+        // entity is handed to any caller, and the validating Create() factory below
+        // is the only other path that constructs a District, so these values are
+        // never actually observed as null.
+    }
+
     public DistrictId Id { get; }
 
     /// <summary>The code as entered, for display.</summary>
-    public string Code { get; }
+    public string Code { get; } = null!;
 
     /// <summary>The code the unique index is built on.</summary>
-    public string NormalizedCode { get; }
+    public string NormalizedCode { get; } = null!;
 
-    public string Name { get; private set; }
+    public string Name { get; private set; } = null!;
 
-    public TrustedApiUrl ApiBaseUrl { get; private set; }
+    public TrustedApiUrl ApiBaseUrl { get; private set; } = null!;
 
     public DistrictStatus Status { get; private set; }
 
