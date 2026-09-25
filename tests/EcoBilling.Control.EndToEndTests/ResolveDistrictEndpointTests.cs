@@ -118,6 +118,10 @@ public sealed class ResolveDistrictEndpointTests : IDisposable
         Assert.NotNull(body);
         Assert.Equal("district.not_found", body.Code);
         Assert.False(string.IsNullOrEmpty(body.TraceId));
+
+        // Deliberately generic -- an unknown code has no district to reference, unlike
+        // district.inactive below, which does get an actionable message (Q-follow-up).
+        Assert.DoesNotContain("администратору", body.Message);
     }
 
     [Fact]
@@ -141,6 +145,10 @@ public sealed class ResolveDistrictEndpointTests : IDisposable
         var body = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
         Assert.NotNull(body);
         Assert.Equal("district.inactive", body.Code);
+
+        // Generic and actionable, but never the district's own name or any internal detail.
+        Assert.Equal("Обратитесь к администратору вашего округа.", body.Message);
+        Assert.DoesNotContain(district.Code, body.Message);
     }
 
     [Theory]

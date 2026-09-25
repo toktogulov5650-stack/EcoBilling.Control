@@ -1,11 +1,25 @@
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Districts.ResolveDistrict;
+using EcoBilling.Control.Domain.Common;
+using EcoBilling.Control.Domain.Districts;
 
 namespace EcoBilling.Control.Api.Endpoints.Public;
 
 /// <summary>Public, unauthenticated endpoint that resolves a district code to its trusted API address.</summary>
 public static class ResolveDistrictEndpoint
 {
+    /// <summary>
+    /// Overrides <see cref="DistrictErrors.Inactive"/>'s message for this endpoint only, with a
+    /// generic, actionable string a district's own residents can act on. The domain error itself
+    /// stays untouched -- it is also returned by CreateDirector/ResetDirectorPassword (architecture
+    /// doc, section 19.2), whose caller is the system administrator who deactivated the district,
+    /// not one of its residents, so "contact your district's administrator" would not make sense
+    /// there. The code (and therefore the HTTP status, via <see cref="ApiError"/>) is unchanged.
+    /// </summary>
+    private static readonly Error InactiveWithGuidance = new(
+        DistrictErrors.Inactive.Code,
+        "Обратитесь к администратору вашего округа.");
+
     public static IEndpointRouteBuilder MapResolveDistrict(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/v1/districts/resolve", HandleAsync)
@@ -25,7 +39,9 @@ public static class ResolveDistrictEndpoint
 
         if (result.IsFailure)
         {
-            return ApiError.ToResult(result.Error, httpContext);
+            var error = result.Error.Code == DistrictErrors.Inactive.Code ? InactiveWithGuidance : result.Error;
+
+            return ApiError.ToResult(error, httpContext);
         }
 
         var value = result.Value;

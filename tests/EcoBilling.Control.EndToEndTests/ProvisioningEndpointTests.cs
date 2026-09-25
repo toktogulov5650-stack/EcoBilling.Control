@@ -1,14 +1,17 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using EcoBilling.Control.Api.Endpoints;
 using EcoBilling.Control.Api.Endpoints.Administration;
 using EcoBilling.Control.Api.Endpoints.Public;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Domain.Administrators;
 using EcoBilling.Control.Domain.Common;
 using EcoBilling.Control.Domain.Districts;
+using EcoBilling.Control.Domain.Provisioning;
 using EcoBilling.Control.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -209,6 +212,82 @@ public sealed class ProvisioningEndpointTests : IDisposable
 
         Assert.Equal(HttpStatusCode.Conflict, secondResponse.StatusCode);
         Assert.Equal(1, _districtClient.CreateDirectorCallCount); // the second request never reached the district client.
+    }
+
+    [Fact]
+    public async Task CreateDirector_WhenTheDistrictsEcoBillingInstanceIsUnavailable_Returns503_AndFailsTheOperation()
+    {
+        // Stage 17 sweep (brief section 22, scenario "unavailable EcoBilling instance"):
+        // DistrictClientTests (Integration) already proves DistrictClient itself maps a
+        // transport failure to district.unavailable, and CreateDirectorHandlerTests (Unit)
+        // already proves the handler fails the operation on that error -- this closes the
+        // one remaining gap, that the full HTTP stack (ApiError's status-code mapping
+        // included) actually surfaces 503 to the caller, not just the internal Result.
+        _districtClient.CreateDirectorResponder =
+            _ => Result.Failure<DirectorCreationAcknowledged>(ProvisioningOperationErrors.DistrictUnavailable);
+
+        await SeedAdministratorAsync("unavailable-admin@example.com");
+        var district = await SeedActiveDistrictAsync("PROVISION-05");
+        var client = _factory.CreateClient();
+        var accessToken = await LoginAsync(client, "unavailable-admin@example.com");
+
+        var response = await client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/districts/{district.Id.Value}/directors", accessToken,
+            new CreateDirectorHttpRequest("New Director", "director@prov-01.example.com")));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
+        Assert.NotNull(body);
+        Assert.Equal("district.unavailable", body.Code);
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
+        var operation = await dbContext.ProvisioningOperations.SingleAsync(o => o.DistrictId == district.Id);
+        Assert.Equal(ProvisioningStatus.Failed, operation.Status);
+        Assert.Equal("district.unavailable", operation.LastErrorCode);
+    }
+
+    [Fact]
+    public async Task CreateDirector_RetriedAfterATransientFailure_ReusesTheSameOperation_AndSucceeds()
+    {
+        // Stage 17 sweep (brief section 22, scenario "idempotency retry"): the handler-level
+        // idempotency-key reuse itself is already proven by CreateDirectorHandlerTests'
+        // HandleAsync_OnRetryAfterAFailure_ReusesTheSamePendingOperationAndIdempotencyKey
+        // (Unit); this closes the gap at the HTTP surface -- retrying the same admin call
+        // after a transient failure must resolve to the same ProvisioningOperation, not a
+        // second, duplicate one, and must eventually succeed once the district recovers.
+        var failing = true;
+        _districtClient.CreateDirectorResponder = request => failing
+            ? Result.Failure<DirectorCreationAcknowledged>(ProvisioningOperationErrors.DistrictUnavailable)
+            : Result.Success(new DirectorCreationAcknowledged("director-e2e-retry"));
+
+        await SeedAdministratorAsync("retry-admin@example.com");
+        var district = await SeedActiveDistrictAsync("PROVISION-06");
+        var client = _factory.CreateClient();
+        var accessToken = await LoginAsync(client, "retry-admin@example.com");
+
+        var firstResponse = await client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/districts/{district.Id.Value}/directors", accessToken,
+            new CreateDirectorHttpRequest("New Director", "director@prov-01.example.com")));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, firstResponse.StatusCode);
+
+        failing = false;
+
+        var secondResponse = await client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/districts/{district.Id.Value}/directors", accessToken,
+            new CreateDirectorHttpRequest("New Director", "director@prov-01.example.com")));
+        Assert.Equal(HttpStatusCode.Created, secondResponse.StatusCode);
+        var created = await secondResponse.Content.ReadFromJsonAsync<CreateDirectorHttpResponse>();
+        Assert.NotNull(created);
+        Assert.Equal("director-e2e-retry", created.DirectorId);
+
+        Assert.Equal(2, _districtClient.CreateDirectorCallCount); // both attempts reached the district client.
+
+        using var scope = _factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
+        var operations = await dbContext.ProvisioningOperations.Where(o => o.DistrictId == district.Id).ToListAsync();
+        Assert.Single(operations); // the retry reused the existing Pending/Failed operation, not a new row.
+        Assert.Equal(ProvisioningStatus.Completed, operations[0].Status);
     }
 
     [Fact]
