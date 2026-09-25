@@ -12,8 +12,16 @@ namespace EcoBilling.Control.Application.Districts.ResolveDistrict;
 /// exist or one that is merely inactive: both fail with a different <see cref="Error"/>
 /// but the Api layer maps both to the same HTTP status (architecture doc, section 19.1;
 /// technical brief, section 9).
+///
+/// Caches only successful (active, found) resolutions (Stage 12, section 21.1) -- a
+/// not_found/inactive result is never cached. This is a deliberate choice, not an
+/// oversight: caching a negative result risks a newly created or reactivated district
+/// staying invisible for up to the cache TTL after CreateDistrict/ActivateDistrict,
+/// with no invalidation call from either to prevent it (they have no prior cache entry
+/// to remove). A cache miss on an unknown/inactive code is already a single indexed
+/// query -- there is no load problem to solve by caching that path too.
 /// </remarks>
-public sealed class ResolveDistrictHandler(IDistrictRepository districts)
+public sealed class ResolveDistrictHandler(IDistrictRepository districts, ICache cache)
     : IQueryHandler<ResolveDistrictQuery, ResolveDistrictResult>
 {
     /// <summary>
@@ -21,12 +29,15 @@ public sealed class ResolveDistrictHandler(IDistrictRepository districts)
     /// </summary>
     /// <remarks>
     /// A fixed constant of the public contract (architecture doc, section 19.1). This is
-    /// deliberately NOT the same number as Control's server-side resolve cache TTL, which
-    /// is still open (architecture doc, section 26, "Кеш TTL резолва"). The two serve
-    /// different audiences and are not meant to be kept in sync -- see the comparison
-    /// table in the architecture doc for why tying them together would be a mistake.
+    /// deliberately NOT the same number as <see cref="CacheTtl"/>, Control's server-side
+    /// resolve cache TTL (Stage 12). The two serve different audiences and are not meant
+    /// to be kept in sync -- see the comparison table in the architecture doc for why
+    /// tying them together would be a mistake.
     /// </remarks>
     public const int ExpiresInSeconds = 3600;
+
+    /// <summary>Server-side cache TTL (architecture doc, section 26, "Кеш TTL резолва" -- Q12, Stage 12).</summary>
+    public static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(300);
 
     public async Task<Result<ResolveDistrictResult>> HandleAsync(
         ResolveDistrictQuery query,
@@ -39,7 +50,17 @@ public sealed class ResolveDistrictHandler(IDistrictRepository districts)
             return Result.Failure<ResolveDistrictResult>(codeResult.Error);
         }
 
-        var district = await districts.GetByNormalizedCodeAsync(codeResult.Value.Normalized, cancellationToken);
+        var normalizedCode = codeResult.Value.Normalized;
+        var cacheKey = DistrictCacheKeys.Resolve(normalizedCode);
+
+        var cached = await cache.GetAsync<ResolveDistrictResult>(cacheKey, cancellationToken);
+
+        if (cached is not null)
+        {
+            return Result.Success(cached);
+        }
+
+        var district = await districts.GetByNormalizedCodeAsync(normalizedCode, cancellationToken);
 
         if (district is null)
         {
@@ -51,9 +72,13 @@ public sealed class ResolveDistrictHandler(IDistrictRepository districts)
             return Result.Failure<ResolveDistrictResult>(DistrictErrors.Inactive);
         }
 
-        return Result.Success(new ResolveDistrictResult(
+        var result = new ResolveDistrictResult(
             district.NormalizedCode,
             district.ApiBaseUrl.ToString(),
-            ExpiresInSeconds));
+            ExpiresInSeconds);
+
+        await cache.SetAsync(cacheKey, result, CacheTtl, cancellationToken);
+
+        return Result.Success(result);
     }
 }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Auditing;
+using EcoBilling.Control.Application.Districts;
 using EcoBilling.Control.Domain.Common;
 using EcoBilling.Control.Domain.Districts;
 
@@ -22,6 +23,7 @@ namespace EcoBilling.Control.Application.Districts.ActivateDistrict;
 public sealed class ActivateDistrictHandler(
     IDistrictRepository districts,
     IAuditWriter auditWriter,
+    ICache cache,
     IUnitOfWork unitOfWork,
     IClock clock) : ICommandHandler<ActivateDistrictCommand, Unit>
 {
@@ -43,6 +45,7 @@ public sealed class ActivateDistrictHandler(
         {
             WriteSuccessEntry(command, entityId, before, before, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            await cache.RemoveAsync(DistrictCacheKeys.Resolve(district.NormalizedCode), cancellationToken);
 
             return Result.Success(Unit.Value);
         }
@@ -57,6 +60,12 @@ public sealed class ActivateDistrictHandler(
         WriteSuccessEntry(command, entityId, before, Snapshot(district), now);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Activation is exactly when a district starts being a valid resolve target --
+        // invalidating here matters less for staleness (nothing legitimate was cached
+        // for an inactive district, section 21.1) and more for consistency with every
+        // other district-mutating handler doing the same thing after every success.
+        await cache.RemoveAsync(DistrictCacheKeys.Resolve(district.NormalizedCode), cancellationToken);
 
         return Result.Success(Unit.Value);
     }

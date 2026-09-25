@@ -6,7 +6,27 @@ RUN dotnet publish src/EcoBilling.Control.Api/EcoBilling.Control.Api.csproj -c R
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
+
+# curl only for HEALTHCHECK below -- removed from the image in the same layer it's
+# installed in, so it never lands in the final image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/publish .
+
+# "app" (uid/gid 1654) is baked into this base image already -- not created here, just
+# switched to, so the process never runs as root (Stage 15).
+USER app
+
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
+
+# Liveness only (matches GET /health, not /ready -- Stage 14, architecture doc section
+# 21.9): a container run standalone, without PostgreSQL at all, must still report
+# healthy for "the process itself is fine." A separate, Postgres-aware check is compose.yml's
+# own healthcheck for the api service, which only makes sense with postgres present.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl --fail http://localhost:8080/health || exit 1
+
 ENTRYPOINT ["dotnet", "EcoBilling.Control.Api.dll"]

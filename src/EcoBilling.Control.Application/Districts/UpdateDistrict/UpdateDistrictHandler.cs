@@ -1,6 +1,7 @@
 using System.Text.Json;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Auditing;
+using EcoBilling.Control.Application.Districts;
 using EcoBilling.Control.Domain.Common;
 using EcoBilling.Control.Domain.Districts;
 
@@ -17,6 +18,7 @@ public sealed class UpdateDistrictHandler(
     IDistrictRepository districts,
     IDistrictHostAllowlist allowlist,
     IAuditWriter auditWriter,
+    ICache cache,
     IUnitOfWork unitOfWork,
     IClock clock) : ICommandHandler<UpdateDistrictCommand, Unit>
 {
@@ -90,6 +92,11 @@ public sealed class UpdateDistrictHandler(
             now));
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Explicit invalidation is the primary mechanism, not the resolve cache's TTL
+        // (architecture doc, section 21.1, Stage 12): ApiBaseUrl or code changing must
+        // not wait out up to 300 seconds of a stale cached address.
+        await cache.RemoveAsync(DistrictCacheKeys.Resolve(district.NormalizedCode), cancellationToken);
 
         return Result.Success(Unit.Value);
     }

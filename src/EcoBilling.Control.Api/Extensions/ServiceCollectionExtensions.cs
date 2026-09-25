@@ -21,6 +21,7 @@ using EcoBilling.Control.Application.Provisioning.ResetDirectorPassword;
 using EcoBilling.Control.Infrastructure;
 using EcoBilling.Control.Infrastructure.Auditing;
 using EcoBilling.Control.Infrastructure.Authentication;
+using EcoBilling.Control.Infrastructure.Caching;
 using EcoBilling.Control.Infrastructure.DistrictClients;
 using EcoBilling.Control.Infrastructure.Districts;
 using EcoBilling.Control.Infrastructure.Persistence;
@@ -86,6 +87,15 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
         services.AddScoped<IProvisioningOperationRepository, ProvisioningOperationRepository>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+
+        return services;
+    }
+
+    /// <summary>Registers the in-memory resolve cache (Stage 12, Q13).</summary>
+    public static IServiceCollection AddDistrictCache(this IServiceCollection services)
+    {
+        services.AddMemoryCache();
+        services.AddSingleton<ICache, InMemoryCache>();
 
         return services;
     }

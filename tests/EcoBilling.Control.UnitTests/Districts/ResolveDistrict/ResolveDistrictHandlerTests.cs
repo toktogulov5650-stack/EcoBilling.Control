@@ -31,7 +31,7 @@ public sealed class ResolveDistrictHandlerTests
     public async Task HandleAsync_RejectsAMalformedCodeWithoutQueryingTheRepository(string? input)
     {
         var repository = new FakeDistrictRepository();
-        var handler = new ResolveDistrictHandler(repository);
+        var handler = new ResolveDistrictHandler(repository, new FakeCache());
 
         var result = await handler.HandleAsync(new ResolveDistrictQuery(input), CancellationToken.None);
 
@@ -43,7 +43,7 @@ public sealed class ResolveDistrictHandlerTests
     public async Task HandleAsync_ReturnsNotFoundForAnUnknownCode()
     {
         var repository = new FakeDistrictRepository();
-        var handler = new ResolveDistrictHandler(repository);
+        var handler = new ResolveDistrictHandler(repository, new FakeCache());
 
         var result = await handler.HandleAsync(new ResolveDistrictQuery("OSH-01"), CancellationToken.None);
 
@@ -62,7 +62,7 @@ public sealed class ResolveDistrictHandlerTests
             TrustedApiUrl.Create("https://district-01.example.com").Value,
             DateTimeOffset.UtcNow).Value;
         repository.Seed(district);
-        var handler = new ResolveDistrictHandler(repository);
+        var handler = new ResolveDistrictHandler(repository, new FakeCache());
 
         var result = await handler.HandleAsync(new ResolveDistrictQuery("BISHKEK-01"), CancellationToken.None);
 
@@ -84,7 +84,7 @@ public sealed class ResolveDistrictHandlerTests
             TrustedApiUrl.Create("https://district-01.example.com").Value,
             DateTimeOffset.UtcNow).Value;
         repository.Seed(inactiveDistrict);
-        var handler = new ResolveDistrictHandler(repository);
+        var handler = new ResolveDistrictHandler(repository, new FakeCache());
 
         var notFoundResult = await handler.HandleAsync(new ResolveDistrictQuery("OSH-01"), CancellationToken.None);
         var inactiveResult = await handler.HandleAsync(new ResolveDistrictQuery("BISHKEK-01"), CancellationToken.None);
@@ -100,7 +100,7 @@ public sealed class ResolveDistrictHandlerTests
         var repository = new FakeDistrictRepository();
         var district = ActiveDistrict();
         repository.Seed(district);
-        var handler = new ResolveDistrictHandler(repository);
+        var handler = new ResolveDistrictHandler(repository, new FakeCache());
 
         var result = await handler.HandleAsync(new ResolveDistrictQuery("BISHKEK-01"), CancellationToken.None);
 
@@ -116,12 +116,65 @@ public sealed class ResolveDistrictHandlerTests
         var repository = new FakeDistrictRepository();
         var district = ActiveDistrict();
         repository.Seed(district);
-        var handler = new ResolveDistrictHandler(repository);
+        var handler = new ResolveDistrictHandler(repository, new FakeCache());
 
         var result = await handler.HandleAsync(new ResolveDistrictQuery("bishkek-01"), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal("BISHKEK-01", result.Value.DistrictCode);
+    }
+
+    [Fact]
+    public async Task HandleAsync_OnASuccessfulResolve_PopulatesTheCache()
+    {
+        var repository = new FakeDistrictRepository();
+        repository.Seed(ActiveDistrict());
+        var cache = new FakeCache();
+        var handler = new ResolveDistrictHandler(repository, cache);
+
+        await handler.HandleAsync(new ResolveDistrictQuery("BISHKEK-01"), CancellationToken.None);
+
+        var cached = await cache.GetAsync<ResolveDistrictResult>("district:resolve:BISHKEK-01", CancellationToken.None);
+        Assert.NotNull(cached);
+        Assert.Equal("BISHKEK-01", cached.DistrictCode);
+    }
+
+    [Fact]
+    public async Task HandleAsync_OnACacheHit_NeverQueriesTheRepository()
+    {
+        var repository = new FakeDistrictRepository();
+        var cache = new FakeCache();
+        cache.Seed("district:resolve:BISHKEK-01", new ResolveDistrictResult("BISHKEK-01", "https://cached.example.com/api", 3600));
+        var handler = new ResolveDistrictHandler(repository, cache);
+
+        var result = await handler.HandleAsync(new ResolveDistrictQuery("BISHKEK-01"), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("https://cached.example.com/api", result.Value.ApiBaseUrl);
+        Assert.Empty(repository.Added); // sanity: nothing was ever seeded into the repository either.
+    }
+
+    [Theory]
+    [InlineData("OSH-01")] // not_found
+    [InlineData("BISHKEK-01")] // inactive
+    public async Task HandleAsync_NeverCachesANegativeResult(string code)
+    {
+        var repository = new FakeDistrictRepository();
+        var inactiveDistrict = District.Create(
+            DistrictId.New(),
+            DistrictCode.Create("BISHKEK-01").Value,
+            "Bishkek district",
+            TrustedApiUrl.Create("https://district-01.example.com").Value,
+            DateTimeOffset.UtcNow).Value; // never activated
+        repository.Seed(inactiveDistrict);
+        var cache = new FakeCache();
+        var handler = new ResolveDistrictHandler(repository, cache);
+
+        await handler.HandleAsync(new ResolveDistrictQuery(code), CancellationToken.None);
+
+        var cached = await cache.GetAsync<ResolveDistrictResult>(
+            $"district:resolve:{code}", CancellationToken.None);
+        Assert.Null(cached);
     }
 
     [Fact]

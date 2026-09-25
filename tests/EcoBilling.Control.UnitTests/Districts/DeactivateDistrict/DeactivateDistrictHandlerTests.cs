@@ -30,14 +30,16 @@ public sealed class DeactivateDistrictHandlerTests
     {
         var repository = new FakeDistrictRepository();
         var auditWriter = new FakeAuditWriter();
+        var cache = new FakeCache();
         var unitOfWork = new FakeUnitOfWork();
-        var handler = new DeactivateDistrictHandler(repository, auditWriter, unitOfWork, new FixedClock(Later));
+        var handler = new DeactivateDistrictHandler(repository, auditWriter, cache, unitOfWork, new FixedClock(Later));
 
         var result = await handler.HandleAsync(new DeactivateDistrictCommand(DistrictId.New(), Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("district.not_found", result.Error.Code);
         Assert.Equal("district.deactivate_failed", auditWriter.Entries[0].Action);
+        Assert.Empty(cache.RemovedKeys);
     }
 
     [Fact]
@@ -47,8 +49,9 @@ public sealed class DeactivateDistrictHandlerTests
         var repository = new FakeDistrictRepository();
         repository.Seed(district);
         var auditWriter = new FakeAuditWriter();
+        var cache = new FakeCache();
         var unitOfWork = new FakeUnitOfWork();
-        var handler = new DeactivateDistrictHandler(repository, auditWriter, unitOfWork, new FixedClock(Later));
+        var handler = new DeactivateDistrictHandler(repository, auditWriter, cache, unitOfWork, new FixedClock(Later));
 
         var result = await handler.HandleAsync(new DeactivateDistrictCommand(district.Id, Caller), CancellationToken.None);
 
@@ -57,6 +60,7 @@ public sealed class DeactivateDistrictHandlerTests
         Assert.Equal(Later, district.DeactivatedAt);
         Assert.Equal(1, unitOfWork.SaveChangesCallCount);
         Assert.Equal("district.deactivated", auditWriter.Entries[0].Action);
+        Assert.Equal(["district:resolve:BISHKEK-01"], cache.RemovedKeys);
     }
 
     [Fact]
@@ -79,8 +83,9 @@ public sealed class DeactivateDistrictHandlerTests
         var repository = new FakeDistrictRepository();
         repository.Seed(district);
         var auditWriter = new FakeAuditWriter();
+        var cache = new FakeCache();
         var unitOfWork = new FakeUnitOfWork();
-        var handler = new DeactivateDistrictHandler(repository, auditWriter, unitOfWork, new FixedClock(Later));
+        var handler = new DeactivateDistrictHandler(repository, auditWriter, cache, unitOfWork, new FixedClock(Later));
 
         var result = await handler.HandleAsync(new DeactivateDistrictCommand(district.Id, Caller), CancellationToken.None);
 
@@ -90,5 +95,6 @@ public sealed class DeactivateDistrictHandlerTests
         Assert.Equal(1, unitOfWork.SaveChangesCallCount); // the no-op audit entry still commits
         Assert.Equal("district.deactivated", auditWriter.Entries[0].Action);
         Assert.Equal(auditWriter.Entries[0].BeforeData, auditWriter.Entries[0].AfterData);
+        Assert.Equal(["district:resolve:BISHKEK-01"], cache.RemovedKeys); // Stage 12: invalidated even on the no-op (harmless).
     }
 }

@@ -27,6 +27,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      # /ready, not /health (Stage 14/15): postgres reporting healthy on its own
+      # (above) only proves the postgres container itself is up, not that api can
+      # actually reach it over the compose network -- this is the check that would
+      # catch that gap.
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/ready"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
 volumes:
   postgres-data:

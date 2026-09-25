@@ -1,6 +1,7 @@
 using System.Text.Json;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Auditing;
+using EcoBilling.Control.Application.Districts;
 using EcoBilling.Control.Domain.Common;
 using EcoBilling.Control.Domain.Districts;
 
@@ -15,6 +16,7 @@ namespace EcoBilling.Control.Application.Districts.DeactivateDistrict;
 public sealed class DeactivateDistrictHandler(
     IDistrictRepository districts,
     IAuditWriter auditWriter,
+    ICache cache,
     IUnitOfWork unitOfWork,
     IClock clock) : ICommandHandler<DeactivateDistrictCommand, Unit>
 {
@@ -36,6 +38,7 @@ public sealed class DeactivateDistrictHandler(
         {
             WriteSuccessEntry(command, entityId, before, before, now);
             await unitOfWork.SaveChangesAsync(cancellationToken);
+            await cache.RemoveAsync(DistrictCacheKeys.Resolve(district.NormalizedCode), cancellationToken);
 
             return Result.Success(Unit.Value);
         }
@@ -50,6 +53,12 @@ public sealed class DeactivateDistrictHandler(
         WriteSuccessEntry(command, entityId, before, Snapshot(district), now);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Deactivation is the case the architecture doc explicitly calls out (section
+        // 19.1's TTL-vs-cache comparison table: "задержкой инвалидации кеша при
+        // деактивации округа") -- a deactivated district must not keep resolving to a
+        // now-untrusted address for up to 300 seconds after this call.
+        await cache.RemoveAsync(DistrictCacheKeys.Resolve(district.NormalizedCode), cancellationToken);
 
         return Result.Success(Unit.Value);
     }

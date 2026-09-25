@@ -5,8 +5,10 @@ using EcoBilling.Control.Api.Endpoints.Administration;
 using EcoBilling.Control.Api.Endpoints.Public;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Domain.Administrators;
+using EcoBilling.Control.Domain.Districts;
 using EcoBilling.Control.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -176,6 +178,78 @@ public sealed class DistrictAdministrationEndpointTests : IDisposable
         var audit = await auditResponse.Content.ReadFromJsonAsync<AuditEntriesResponse>();
         Assert.NotNull(audit);
         Assert.Contains(audit.Items, e => e.Action == "district.create_failed" && e.AdministratorId == administratorId.Value);
+    }
+
+    [Fact]
+    public async Task ResolveDistrict_IsActuallyCached_NotJustConsistentByCoincidence()
+    {
+        // Deliberately bypasses UpdateDistrict/DeactivateDistrict's own cache
+        // invalidation (Stage 12) by deactivating directly through the DbContext, the
+        // same way a test would reach around any handler to inspect raw state. If
+        // ResolveDistrict were hitting PostgreSQL on every call, this deactivation would
+        // be visible immediately; if it returns the stale, still-active address instead,
+        // that is direct proof the cache -- not just consistent responses by luck -- is
+        // what's actually being served.
+        var (district, _) = await CreateAndActivateDistrictAsync("cached-bypass-admin@example.com", "EEND-03", "https://e2e-01.example.com/api");
+        var client = _factory.CreateClient();
+
+        var firstResolve = await client.PostAsJsonAsync("/api/v1/districts/resolve", new ResolveDistrictRequest("EEND-03"));
+        Assert.Equal(HttpStatusCode.OK, firstResolve.StatusCode); // primes the cache.
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
+            var districtId = new DistrictId(Guid.Parse(district.DistrictId));
+            var tracked = await dbContext.Districts.SingleAsync(d => d.Id == districtId);
+            tracked.Deactivate(DateTimeOffset.UtcNow);
+            await dbContext.SaveChangesAsync(); // no handler involved -- nothing invalidates the cache.
+        }
+
+        var secondResolve = await client.PostAsJsonAsync("/api/v1/districts/resolve", new ResolveDistrictRequest("EEND-03"));
+
+        Assert.Equal(HttpStatusCode.OK, secondResolve.StatusCode); // still the stale, cached success -- not district.inactive.
+    }
+
+    [Fact]
+    public async Task UpdateDistrict_InvalidatesTheResolveCache_SoTheNewAddressIsVisibleImmediately()
+    {
+        var (district, accessToken) = await CreateAndActivateDistrictAsync(
+            "cache-invalidation-admin@example.com", "EEND-04", "https://e2e-01.example.com/api");
+        var client = _factory.CreateClient();
+
+        var firstResolve = await client.PostAsJsonAsync("/api/v1/districts/resolve", new ResolveDistrictRequest("EEND-04"));
+        var firstResult = await firstResolve.Content.ReadFromJsonAsync<ResolveDistrictResponse>();
+        Assert.NotNull(firstResult);
+        Assert.Equal("https://e2e-01.example.com/api", firstResult.ApiBaseUrl); // primes the cache.
+
+        var updateResponse = await client.SendAsync(Authorized(
+            HttpMethod.Put, $"/api/v1/admin/districts/{district.DistrictId}", accessToken,
+            new UpdateDistrictRequest(null, "https://e2e-02.example.com/api")));
+        Assert.Equal(HttpStatusCode.NoContent, updateResponse.StatusCode); // invalidates the cache (Stage 12).
+
+        var secondResolve = await client.PostAsJsonAsync("/api/v1/districts/resolve", new ResolveDistrictRequest("EEND-04"));
+        var secondResult = await secondResolve.Content.ReadFromJsonAsync<ResolveDistrictResponse>();
+
+        Assert.NotNull(secondResult);
+        Assert.Equal("https://e2e-02.example.com/api", secondResult.ApiBaseUrl); // the new address, immediately -- not the 300s-old cached one.
+    }
+
+    private async Task<(CreateDistrictResponse District, string AccessToken)> CreateAndActivateDistrictAsync(
+        string adminEmail, string code, string apiBaseUrl)
+    {
+        await SeedAdministratorAsync(adminEmail);
+        var client = _factory.CreateClient();
+        var accessToken = await LoginAsync(client, adminEmail);
+
+        var createResponse = await client.SendAsync(Authorized(
+            HttpMethod.Post, "/api/v1/admin/districts", accessToken,
+            new CreateDistrictRequest(code, "Cache test district", apiBaseUrl)));
+        var created = (await createResponse.Content.ReadFromJsonAsync<CreateDistrictResponse>())!;
+
+        await client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/admin/districts/{created.DistrictId}/activate", accessToken));
+
+        return (created, accessToken);
     }
 
     public void Dispose() => _factory.Dispose();

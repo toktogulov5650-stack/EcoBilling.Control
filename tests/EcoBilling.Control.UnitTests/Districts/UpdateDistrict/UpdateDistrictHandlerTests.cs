@@ -15,6 +15,7 @@ public sealed class UpdateDistrictHandlerTests
         District District,
         FakeDistrictRepository Repository,
         FakeAuditWriter AuditWriter,
+        FakeCache Cache,
         FakeUnitOfWork UnitOfWork,
         UpdateDistrictHandler Handler);
 
@@ -30,11 +31,12 @@ public sealed class UpdateDistrictHandlerTests
         var repository = new FakeDistrictRepository();
         repository.Seed(district);
         var auditWriter = new FakeAuditWriter();
+        var cache = new FakeCache();
         var unitOfWork = new FakeUnitOfWork();
         var allowlist = new FakeDistrictHostAllowlist(allowedHosts);
-        var handler = new UpdateDistrictHandler(repository, allowlist, auditWriter, unitOfWork, new FixedClock(Later));
+        var handler = new UpdateDistrictHandler(repository, allowlist, auditWriter, cache, unitOfWork, new FixedClock(Later));
 
-        return new Fixture(district, repository, auditWriter, unitOfWork, handler);
+        return new Fixture(district, repository, auditWriter, cache, unitOfWork, handler);
     }
 
     [Fact]
@@ -80,6 +82,7 @@ public sealed class UpdateDistrictHandlerTests
         Assert.Equal(1, fixture.UnitOfWork.SaveChangesCallCount);
         Assert.Single(fixture.AuditWriter.Entries);
         Assert.Equal("district.updated", fixture.AuditWriter.Entries[0].Action);
+        Assert.Equal(["district:resolve:BISHKEK-01"], fixture.Cache.RemovedKeys); // Stage 12: invalidated on success.
     }
 
     [Fact]
@@ -96,6 +99,7 @@ public sealed class UpdateDistrictHandlerTests
         Assert.Equal("Original name", fixture.District.Name); // the business state is unchanged...
         Assert.Equal(1, fixture.UnitOfWork.SaveChangesCallCount); // ...but the failure audit entry still commits.
         Assert.Equal("district.update_failed", fixture.AuditWriter.Entries[0].Action);
+        Assert.Empty(fixture.Cache.RemovedKeys); // nothing changed -- no invalidation needed.
     }
 
     [Fact]
