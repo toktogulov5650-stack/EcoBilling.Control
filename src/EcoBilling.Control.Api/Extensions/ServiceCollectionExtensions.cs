@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Threading.RateLimiting;
+using EcoBilling.Control.Api.Cors;
 using EcoBilling.Control.Api.Endpoints;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Administrators.CreateAdministrator;
@@ -276,4 +277,46 @@ public static class ServiceCollectionExtensions
 
     private static string ClientIp(HttpContext httpContext) =>
         httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    /// <summary>Name of the single CORS policy this API registers, applied globally via <c>UseCors</c>.</summary>
+    public const string CorsPolicyName = "Control";
+
+    /// <summary>
+    /// Registers the CORS policy required before any browser-hosted frontend can call this
+    /// API cross-origin (Stage 18). Deny-by-default in every environment except one
+    /// specific case: Development, with no <c>Cors:AllowedOrigins</c> configured at all,
+    /// where any origin is allowed -- a local frontend dev server's port changes often
+    /// enough that requiring it to be listed here would be pure friction, and Development
+    /// is not internet-facing. An explicit list always wins, even in Development: a
+    /// developer who deliberately configures it locally to rehearse the Production
+    /// behavior is not silently overridden back to permissive. This API authenticates with
+    /// a bearer token in the Authorization header, not cookies, so the policy never needs
+    /// <c>AllowCredentials()</c> -- which cannot be combined with <c>AllowAnyOrigin()</c> anyway.
+    /// </summary>
+    public static IServiceCollection AddApiCors(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    {
+        var corsOptions = configuration.GetSection(CorsOptions.SectionName).Get<CorsOptions>() ?? new CorsOptions();
+
+        services.AddCors(options => options.AddPolicy(CorsPolicyName, policy =>
+        {
+            if (corsOptions.AllowedOrigins.Length > 0)
+            {
+                policy.WithOrigins(corsOptions.AllowedOrigins).AllowAnyHeader().AllowAnyMethod();
+
+                return;
+            }
+
+            if (environment.IsDevelopment())
+            {
+                policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+
+                return;
+            }
+
+            // Deny by default: an empty WithOrigins() call throws, so the policy is left
+            // with nothing added -- every cross-origin browser request is rejected.
+        }));
+
+        return services;
+    }
 }

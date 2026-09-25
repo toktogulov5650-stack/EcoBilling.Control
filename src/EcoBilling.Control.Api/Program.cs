@@ -14,6 +14,7 @@ builder.Services.AddAdministratorAuthentication(builder.Configuration);
 builder.Services.AddAuditing();
 builder.Services.AddDistrictClient(builder.Configuration);
 builder.Services.AddApiRateLimiting();
+builder.Services.AddApiCors(builder.Configuration, builder.Environment);
 builder.Services.AddDistrictCache();
 builder.Services.AddHealthChecks().AddCheck<PostgresHealthCheck>("postgres");
 
@@ -37,6 +38,15 @@ if (app.Environment.IsProduction() && app.Configuration["AllowedHosts"] is null 
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+
+    // Swagger UI only, not the full Swashbuckle generator -- the OpenAPI document itself
+    // still comes from Microsoft.AspNetCore.OpenApi (AddOpenApi/MapOpenApi above); this
+    // package only adds the interactive page a frontend developer would actually use,
+    // reading that same document. Gated the same way as MapOpenApi itself (Development
+    // only): the document describes every admin endpoint's request/response shape, and
+    // nothing protects /swagger itself, so exposing it in Production would be handing out
+    // a map of the internal API surface to anyone who finds the URL.
+    app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "EcoBilling.Control API v1"));
 }
 
 // Only when Kestrel actually has an HTTPS endpoint configured (Stage 15): in the
@@ -70,18 +80,28 @@ app.Use(async (context, next) =>
         stopwatch.ElapsedMilliseconds);
 });
 
+app.UseCors(ServiceCollectionExtensions.CorsPolicyName);
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 
+// Both excluded from the OpenAPI document (Stage 18): that document is the API contract
+// handed to a frontend developer (section 22 below), and these are operational endpoints
+// for an orchestrator, not part of it -- neither lives under /api/v1 either. Previously
+// /health leaked into the document by accident (a plain MapGet delegate gets picked up by
+// the generator automatically) while /ready did not (MapHealthChecks's endpoint isn't
+// described the same way), an inconsistency rather than a deliberate choice; both are now
+// excluded the same way, on purpose.
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }))
-    .WithName("Health");
+    .WithName("Health")
+    .ExcludeFromDescription();
 
 // Distinct from /health (Stage 14): proves PostgreSQL is actually reachable, not just
 // that the process is running. An orchestrator should stop routing traffic here on a
 // failed /ready without restarting the process the way a failed /health (liveness) would.
 app.MapHealthChecks("/ready")
-    .WithName("Ready");
+    .WithName("Ready")
+    .ExcludeFromDescription();
 
 app.MapResolveDistrict();
 app.MapAdministratorAuthEndpoints();

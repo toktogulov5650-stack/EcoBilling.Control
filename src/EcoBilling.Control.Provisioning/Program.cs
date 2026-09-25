@@ -2,9 +2,11 @@ using System.Text;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Administrators.CreateAdministrator;
 using EcoBilling.Control.Infrastructure;
+using EcoBilling.Control.Infrastructure.Auditing;
 using EcoBilling.Control.Infrastructure.Authentication;
 using EcoBilling.Control.Infrastructure.Persistence;
 using EcoBilling.Control.Infrastructure.Persistence.Administrators;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,6 +47,15 @@ services.AddScoped<IAdministratorRepository, AdministratorRepository>();
 services.AddScoped<IUnitOfWork, EfUnitOfWork>();
 services.AddSingleton<IPasswordHasher, PasswordHasher>();
 services.AddSingleton<IClock, SystemClock>();
+
+// CreateAdministratorHandler audits every attempt (Stage 7) -- added here after this CLI
+// was found broken (Stage 18 README verification): AuditWriter itself needs
+// IHttpContextAccessor even though there is no HTTP request in this process at all; its
+// own doc comment already anticipates that -- a null HttpContext just leaves
+// CorrelationId/IpAddress/UserAgent null, no special-casing required.
+services.AddHttpContextAccessor();
+services.AddScoped<IAuditWriter, AuditWriter>();
+
 services.AddScoped<ICommandHandler<CreateAdministratorCommand, CreateAdministratorResult>, CreateAdministratorHandler>();
 
 await using var provider = services.BuildServiceProvider();
