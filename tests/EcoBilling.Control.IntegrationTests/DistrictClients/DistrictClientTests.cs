@@ -231,4 +231,109 @@ public sealed class DistrictClientTests
         Assert.True(result.IsFailure);
         Assert.Equal("director.not_found", result.Error.Code);
     }
+
+    // Circuit breaker tests (Q17 follow-up) deliberately use their own district codes,
+    // never reused elsewhere in this file: CircuitBreakersByDistrict is static and keyed
+    // by NormalizedCode, so a test that trips a breaker for "BISHKEK-01" would otherwise
+    // leak that state into every other test in this class using the same default code.
+
+    [Fact]
+    public async Task CreateDirectorAsync_AfterFiveConsecutiveServerErrors_TripsTheCircuitBreaker_WithoutAnySixthCallReachingTheHandler()
+    {
+        var callCount = 0;
+        var handler = new RecordingHandler((_, _) =>
+        {
+            callCount++;
+
+            return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        });
+        var client = NewClient(handler);
+        var district = NewDistrict("CIRCBREAK-01");
+
+        for (var i = 0; i < 5; i++)
+        {
+            var result = await client.CreateDirectorAsync(
+                district, new CreateDirectorRequest("Director", "director@example.com"), $"idem-{i}", CancellationToken.None);
+            Assert.Equal("district.unavailable", result.Error.Code);
+        }
+
+        Assert.Equal(5, callCount); // sanity: all 5 genuinely reached the handler.
+
+        var sixthResult = await client.CreateDirectorAsync(
+            district, new CreateDirectorRequest("Director", "director@example.com"), "idem-6", CancellationToken.None);
+
+        Assert.True(sixthResult.IsFailure);
+        Assert.Equal("district.unavailable", sixthResult.Error.Code);
+        Assert.Equal(5, callCount); // unchanged -- the open breaker short-circuited before the handler was ever invoked.
+    }
+
+    [Fact]
+    public async Task CreateDirectorAsync_ATrippedBreakerForOneDistrict_DoesNotAffectAnotherDistrict()
+    {
+        var failingHandler = new RecordingHandler((_, _) => new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        var failingClient = NewClient(failingHandler);
+        var failingDistrict = NewDistrict("CIRCBREAK-02");
+
+        for (var i = 0; i < 6; i++) // 5 to trip, a 6th to prove it stays open.
+        {
+            await failingClient.CreateDirectorAsync(
+                failingDistrict, new CreateDirectorRequest("Director", "director@example.com"), $"idem-{i}", CancellationToken.None);
+        }
+
+        var healthyHandler = new RecordingHandler((_, _) => JsonResponse(
+            HttpStatusCode.Created, new { directorId = "director-id", operationId = "op-1", status = "created" }));
+        var healthyClient = NewClient(healthyHandler);
+        var healthyDistrict = NewDistrict("CIRCBREAK-03");
+
+        var result = await healthyClient.CreateDirectorAsync(
+            healthyDistrict, new CreateDirectorRequest("Director", "director@example.com"), "idem-other", CancellationToken.None);
+
+        Assert.True(result.IsSuccess); // a different district's breaker is a separate, never-tripped entry.
+    }
+
+    [Fact]
+    public async Task CreateDirectorAsync_FourConsecutiveServerErrors_DoNotTripTheBreakerYet()
+    {
+        var callCount = 0;
+        var handler = new RecordingHandler((_, _) =>
+        {
+            callCount++;
+
+            return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        });
+        var client = NewClient(handler);
+        var district = NewDistrict("CIRCBREAK-04");
+
+        for (var i = 0; i < 4; i++)
+        {
+            await client.CreateDirectorAsync(
+                district, new CreateDirectorRequest("Director", "director@example.com"), $"idem-{i}", CancellationToken.None);
+        }
+
+        Assert.Equal(4, callCount); // below MinimumThroughput -- the 5th call must still reach the handler, not be short-circuited.
+    }
+
+    [Fact]
+    public async Task CreateDirectorAsync_BusinessRejections_NeverCountTowardTheCircuitBreaker()
+    {
+        // 409/400/401/404 are the district correctly responding, not failing --
+        // repeated business rejections must never trip the breaker.
+        var callCount = 0;
+        var handler = new RecordingHandler((_, _) =>
+        {
+            callCount++;
+
+            return JsonResponse(HttpStatusCode.Conflict, new { code = "director.already_exists", message = "Already exists." });
+        });
+        var client = NewClient(handler);
+        var district = NewDistrict("CIRCBREAK-05");
+
+        for (var i = 0; i < 10; i++)
+        {
+            await client.CreateDirectorAsync(
+                district, new CreateDirectorRequest("Director", "director@example.com"), $"idem-{i}", CancellationToken.None);
+        }
+
+        Assert.Equal(10, callCount); // every single call reached the handler -- none were short-circuited.
+    }
 }
