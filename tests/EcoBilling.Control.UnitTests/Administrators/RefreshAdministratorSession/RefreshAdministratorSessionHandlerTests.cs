@@ -13,6 +13,7 @@ public sealed class RefreshAdministratorSessionHandlerTests
         Administrator Administrator,
         FakeAdministratorRepository Administrators,
         FakeRefreshTokenRepository RefreshTokens,
+        FakeAuditWriter AuditWriter,
         FakeUnitOfWork UnitOfWork,
         RefreshAdministratorSessionHandler Handler);
 
@@ -28,12 +29,13 @@ public sealed class RefreshAdministratorSessionHandlerTests
         var administrators = new FakeAdministratorRepository();
         administrators.Seed(administrator);
         var refreshTokens = new FakeRefreshTokenRepository();
+        var auditWriter = new FakeAuditWriter();
         var unitOfWork = new FakeUnitOfWork();
         var accessTokenIssuer = new FakeAccessTokenIssuer(TimeSpan.FromMinutes(15));
         var handler = new RefreshAdministratorSessionHandler(
-            administrators, refreshTokens, accessTokenIssuer, unitOfWork, new FixedClock(now));
+            administrators, refreshTokens, accessTokenIssuer, auditWriter, unitOfWork, new FixedClock(now));
 
-        return new Fixture(administrator, administrators, refreshTokens, unitOfWork, handler);
+        return new Fixture(administrator, administrators, refreshTokens, auditWriter, unitOfWork, handler);
     }
 
     [Theory]
@@ -47,6 +49,7 @@ public sealed class RefreshAdministratorSessionHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("administrator.invalid_refresh_token", result.Error.Code);
+        Assert.Empty(fixture.AuditWriter.Entries); // routine rejection, not audited (Stage 7: only reuse detection is)
     }
 
     [Fact]
@@ -78,12 +81,13 @@ public sealed class RefreshAdministratorSessionHandlerTests
         Assert.NotNull(issued.Token.RevokedAt);
         Assert.Single(fixture.RefreshTokens.Added); // exactly the new token -- the old one was seeded directly, not "Added".
         Assert.Equal(1, fixture.UnitOfWork.SaveChangesCallCount);
+        Assert.Empty(fixture.AuditWriter.Entries); // routine rotation, deliberately not audited (Stage 7 decision)
     }
 
     [Fact]
     public async Task HandleAsync_RejectsAnExpiredButNeverRevokedToken_WithoutTouchingOtherSessions()
     {
-        // An ordinary stale token, not a reuse signal -- must not trigger revoke-all.
+        // An ordinary stale token, not a reuse signal -- must not trigger revoke-all or an audit entry.
         var fixture = NewFixture(Now);
         var expired = RefreshToken.IssueNew(RefreshTokenId.New(), fixture.Administrator.Id, Now, TimeSpan.FromMinutes(1));
         fixture.RefreshTokens.Seed(expired.Token);
@@ -101,10 +105,11 @@ public sealed class RefreshAdministratorSessionHandlerTests
         Assert.Equal("administrator.invalid_refresh_token", result.Error.Code);
         Assert.True(stillActive.Token.IsActive(afterExpiry)); // untouched
         Assert.Equal(0, fixture.UnitOfWork.SaveChangesCallCount);
+        Assert.Empty(fixture.AuditWriter.Entries);
     }
 
     [Fact]
-    public async Task HandleAsync_ReuseOfAnAlreadyRotatedOutToken_RevokesEveryOtherActiveSession()
+    public async Task HandleAsync_ReuseOfAnAlreadyRotatedOutToken_RevokesEveryOtherActiveSession_AndIsAudited()
     {
         var fixture = NewFixture(Now);
 
@@ -122,7 +127,7 @@ public sealed class RefreshAdministratorSessionHandlerTests
         var otherDeviceSession = RefreshToken.IssueNew(RefreshTokenId.New(), fixture.Administrator.Id, afterFirstRefresh, Lifetime);
         fixture.RefreshTokens.Seed(otherDeviceSession.Token);
 
-        // Now the ORIGINAL (already-rotated-out) token is replayed.
+        // Now the original (already-rotated-out) token is replayed.
         var replayAttemptAt = afterFirstRefresh.AddMinutes(1);
         var replayFixture = NewFixtureAt(fixture, replayAttemptAt);
 
@@ -132,6 +137,12 @@ public sealed class RefreshAdministratorSessionHandlerTests
         Assert.True(replayResult.IsFailure);
         Assert.Equal("administrator.invalid_refresh_token", replayResult.Error.Code);
         Assert.False(otherDeviceSession.Token.IsActive(replayAttemptAt)); // revoked as a side effect of the reuse.
+
+        // The reuse -- a genuine security event -- is audited (Stage 7), even though
+        // the earlier legitimate rotation was not.
+        var reuseEntry = Assert.Single(fixture.AuditWriter.Entries);
+        Assert.Equal("administrator.session_reuse_detected", reuseEntry.Action);
+        Assert.Equal(fixture.Administrator.Id.Value, reuseEntry.AdministratorId);
     }
 
     [Fact]
@@ -142,9 +153,10 @@ public sealed class RefreshAdministratorSessionHandlerTests
         var missingAdministratorId = AdministratorId.New();
         var issued = RefreshToken.IssueNew(RefreshTokenId.New(), missingAdministratorId, Now, Lifetime);
         refreshTokens.Seed(issued.Token);
+        var auditWriter = new FakeAuditWriter();
         var unitOfWork = new FakeUnitOfWork();
         var handler = new RefreshAdministratorSessionHandler(
-            administrators, refreshTokens, new FakeAccessTokenIssuer(TimeSpan.FromMinutes(15)), unitOfWork, new FixedClock(Now));
+            administrators, refreshTokens, new FakeAccessTokenIssuer(TimeSpan.FromMinutes(15)), auditWriter, unitOfWork, new FixedClock(Now));
 
         var result = await handler.HandleAsync(new RefreshAdministratorSessionCommand(issued.RawValue), CancellationToken.None);
 
@@ -152,15 +164,16 @@ public sealed class RefreshAdministratorSessionHandlerTests
         Assert.Equal("administrator.invalid_refresh_token", result.Error.Code);
     }
 
-    // Builds a handler sharing the same repositories/administrator as `fixture`, but
-    // driven by a clock fixed at `now` -- lets a test simulate "some time has passed"
-    // between two calls without needing a mutable clock double.
+    // Builds a handler sharing the same repositories/audit writer/administrator as
+    // `fixture`, but driven by a clock fixed at `now` -- lets a test simulate "some
+    // time has passed" between two calls without needing a mutable clock double.
     private static Fixture NewFixtureAt(Fixture fixture, DateTimeOffset now)
     {
         var handler = new RefreshAdministratorSessionHandler(
             fixture.Administrators,
             fixture.RefreshTokens,
             new FakeAccessTokenIssuer(TimeSpan.FromMinutes(15)),
+            fixture.AuditWriter,
             fixture.UnitOfWork,
             new FixedClock(now));
 

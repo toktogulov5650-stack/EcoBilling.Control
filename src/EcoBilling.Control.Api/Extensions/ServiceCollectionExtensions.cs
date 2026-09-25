@@ -4,12 +4,16 @@ using EcoBilling.Control.Application.Administrators.CreateAdministrator;
 using EcoBilling.Control.Application.Administrators.Login;
 using EcoBilling.Control.Application.Administrators.LogoutAdministratorSession;
 using EcoBilling.Control.Application.Administrators.RefreshAdministratorSession;
+using EcoBilling.Control.Application.Auditing.ListAuditEntries;
 using EcoBilling.Control.Application.Districts.ActivateDistrict;
 using EcoBilling.Control.Application.Districts.CreateDistrict;
 using EcoBilling.Control.Application.Districts.DeactivateDistrict;
+using EcoBilling.Control.Application.Districts.GetDistrict;
+using EcoBilling.Control.Application.Districts.ListDistricts;
 using EcoBilling.Control.Application.Districts.ResolveDistrict;
 using EcoBilling.Control.Application.Districts.UpdateDistrict;
 using EcoBilling.Control.Infrastructure;
+using EcoBilling.Control.Infrastructure.Auditing;
 using EcoBilling.Control.Infrastructure.Authentication;
 using EcoBilling.Control.Infrastructure.Districts;
 using EcoBilling.Control.Infrastructure.Persistence;
@@ -35,7 +39,20 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ICommandHandler<RefreshAdministratorSessionCommand, RefreshAdministratorSessionResult>, RefreshAdministratorSessionHandler>();
         services.AddScoped<ICommandHandler<LogoutAdministratorSessionCommand, Unit>, LogoutAdministratorSessionHandler>();
         services.AddScoped<ICommandHandler<CreateAdministratorCommand, CreateAdministratorResult>, CreateAdministratorHandler>();
+        services.AddScoped<IQueryHandler<GetDistrictQuery, GetDistrictResult>, GetDistrictHandler>();
+        services.AddScoped<IQueryHandler<ListDistrictsQuery, ListDistrictsResult>, ListDistrictsHandler>();
+        services.AddScoped<IQueryHandler<ListAuditEntriesQuery, ListAuditEntriesResult>, ListAuditEntriesHandler>();
         services.AddSingleton<IClock, SystemClock>();
+
+        return services;
+    }
+
+    /// <summary>Registers the audit trail writer/reader (Stage 7) and the ambient <see cref="IHttpContextAccessor"/> it enriches entries from.</summary>
+    public static IServiceCollection AddAuditing(this IServiceCollection services)
+    {
+        services.AddHttpContextAccessor();
+        services.AddScoped<IAuditWriter, AuditWriter>();
+        services.AddScoped<IAuditRepository, AuditRepository>();
 
         return services;
     }

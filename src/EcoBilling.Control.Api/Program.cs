@@ -9,6 +9,7 @@ builder.Services.AddApplicationHandlers();
 builder.Services.AddPersistence(builder.Configuration);
 builder.Services.AddDistrictHostAllowlist(builder.Configuration);
 builder.Services.AddAdministratorAuthentication(builder.Configuration);
+builder.Services.AddAuditing();
 
 var app = builder.Build();
 
@@ -28,6 +29,8 @@ app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }))
 app.MapResolveDistrict();
 app.MapAdministratorAuthEndpoints();
 app.MapWhoAmI();
+app.MapDistrictAdministrationEndpoints();
+app.MapAuditEndpoints();
 
 app.Run();
 

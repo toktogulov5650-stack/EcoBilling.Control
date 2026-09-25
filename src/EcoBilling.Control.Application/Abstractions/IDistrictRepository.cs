@@ -23,8 +23,9 @@ public interface IDistrictRepository
     /// own methods (<c>Rename</c>, <c>Activate</c>, ...) and then calling
     /// <see cref="IUnitOfWork.SaveChangesAsync"/> persists the change with no separate
     /// update call. Used by UpdateDistrict, ActivateDistrict and DeactivateDistrict
-    /// (Stage 5), none of which need the no-tracking read <see cref="GetByNormalizedCodeAsync"/>
-    /// uses for the high-frequency resolve path.
+    /// (Stage 5). Also reused by GetDistrict's read-only lookup (Stage 7): that query is
+    /// low-frequency enough that the tracking overhead is not worth a second, otherwise
+    /// identical method.
     /// </summary>
     Task<District?> GetByIdAsync(DistrictId id, CancellationToken cancellationToken);
 
@@ -33,4 +34,10 @@ public interface IDistrictRepository
     /// <see cref="IUnitOfWork.SaveChangesAsync"/> is called.
     /// </summary>
     void Add(District district);
+
+    /// <summary>
+    /// A page of districts ordered by <c>NormalizedCode</c>, plus the total count across
+    /// every page, for ListDistricts (Stage 7). No-tracking: this is a read-only view.
+    /// </summary>
+    Task<PagedResult<District>> ListAsync(int skip, int take, CancellationToken cancellationToken);
 }

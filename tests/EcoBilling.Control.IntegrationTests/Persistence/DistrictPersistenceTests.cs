@@ -187,4 +187,30 @@ public sealed class DistrictPersistenceTests(DatabaseFixture database)
         Assert.Equal("Renamed district", reloaded.Name);
         Assert.Equal("https://district-14-new.example.com/api", reloaded.ApiBaseUrl.ToString());
     }
+
+    [Fact]
+    public async Task Repository_ListAsync_ReturnsAPageOrderedByNormalizedCode_WithTheTotalCountAcrossAllPages()
+    {
+        // The table is shared across the whole test run, so this asserts the relative
+        // order of this test's own three codes within a page large enough to hold
+        // everything, rather than assuming absolute positions -- other tests' rows may
+        // sort anywhere among them.
+        await using var writeContext = database.CreateDbContext();
+        var repository = new DistrictRepository(writeContext);
+        repository.Add(NewDistrict("ZZZLIST-01"));
+        repository.Add(NewDistrict("AAALIST-01"));
+        repository.Add(NewDistrict("MMMLIST-01"));
+        await writeContext.SaveChangesAsync();
+
+        await using var readContext = database.CreateDbContext();
+        var probe = await new DistrictRepository(readContext).ListAsync(skip: 0, take: 1, CancellationToken.None);
+        var fullPage = await new DistrictRepository(readContext)
+            .ListAsync(skip: 0, take: probe.TotalCount, CancellationToken.None);
+
+        Assert.True(fullPage.TotalCount >= 3);
+        var codes = fullPage.Items.Select(d => d.NormalizedCode).ToList();
+        var ourCodes = codes.Where(c => c is "ZZZLIST-01" or "AAALIST-01" or "MMMLIST-01").ToList();
+
+        Assert.Equal(new[] { "AAALIST-01", "MMMLIST-01", "ZZZLIST-01" }, ourCodes);
+    }
 }

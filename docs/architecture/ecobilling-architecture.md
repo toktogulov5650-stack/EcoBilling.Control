@@ -25,11 +25,11 @@ EcoBilling округа (API + Worker)
 Control не проксирует обычные запросы после разрешения кода
 ```
 
-**Статус документа:** архитектурная база до реализации бизнес-логики
-**Дата:** 24 сентября 2026 года
+**Статус документа:** архитектурная база; часть II (Control) частично реализована по Этап 7 включительно
+**Дата:** 25 сентября 2026 года
 **Основание:** фактическая структура решений, README.md, AGENTS.md, *.slnx, *.csproj и согласованные требования.
 
-**Версия:** 0.2 — модель данных и API-контракты приведены в соответствие с техническим заданием
+**Версия:** 0.3 — административные endpoints округов и аудит (`AuditEntries`) отражены как реализованные (Этап 7); модель данных и API-контракты Части I остаются проектными
 
 > **Примечание о приоритете источников.** Там, где раздел 18 (модель данных) или раздел 19 (API) расходились
 > с техническим заданием, авторитетным считается техническое задание. Разделы 17.3, 18, 18.1, 19.1 и 19.2
@@ -672,9 +672,9 @@ Api ─┬─> Application ──> Domain
 |---|---|---|
 | **Administrators** | Id, FullName, Email, NormalizedEmail, PasswordHash, IsActive, CreatedAt, UpdatedAt, LastLoginAt | `NormalizedEmail` уникален; пароль только как хеш; `PasswordHash` никогда не возвращается через API. |
 | **Districts** | Id, Code, NormalizedCode, Name, ApiBaseUrl, Status, CreatedAt, UpdatedAt, ActivatedAt, DeactivatedAt | `NormalizedCode` уникален; `Status` — перечисление, не булево; URL проходит строгую валидацию. |
-| **ProvisioningOperations** | Id, DistrictId, OperationType, IdempotencyKey, Status, RequestMetadata, ResultMetadata, AttemptCount, CreatedAt, StartedAt, CompletedAt, FailedAt, LastErrorCode | История создания директора/сброса без секретов. |
-| **AuditLogs** | Id, AdministratorId, Action, EntityType, EntityId, BeforeData, AfterData, CorrelationId, IpAddress, UserAgent, CreatedAt | Неизменяемый журнал административных действий; секреты и `PasswordHash` исключены. |
-| **OutboxMessages** | Id, Type, Payload, OccurredAt, ProcessedAt, RetryCount, LastError | Надёжная доставка допустимых команд/событий. |
+| **ProvisioningOperations** | Id, DistrictId, OperationType, IdempotencyKey, Status, RequestMetadata, ResultMetadata, AttemptCount, CreatedAt, StartedAt, CompletedAt, FailedAt, LastErrorCode | История создания директора/сброса без секретов. Пока не реализовано — появится вместе с CreateDirector/ResetDirectorPassword (Этап 8+). |
+| **AuditEntries** — РЕАЛИЗОВАНО (Этап 7) | Id, AdministratorId (nullable, без FK), Action, EntityType, EntityId, BeforeData (jsonb), AfterData (jsonb), CorrelationId, IpAddress, UserAgent, CreatedAt | Неизменяемый журнал административных действий; секреты и `PasswordHash` исключены. Названа `AuditEntries`, а не `AuditLogs` из первоначального проекта раздела 18 -- название выровнено с фактическим кодом (`IAuditRepository`, `IAuditWriter`). `AdministratorId` сознательно без внешнего ключа: неизвестный email при входе и создание администратора через Provisioning CLI аудируются без существующего/ещё не существующего администратора (раздел 21.5). |
+| **OutboxMessages** | Id, Type, Payload, OccurredAt, ProcessedAt, RetryCount, LastError | Надёжная доставка допустимых команд/событий. Пока не реализовано. |
 
 **Состояние округа — ЗАФИКСИРОВАНО.** `Districts.Status` — перечисление `DistrictStatus`, а не флаг `IsActive`.
 Булево поле не способно выразить требуемые отметки времени `ActivatedAt` / `DeactivatedAt` и историю переходов.
@@ -694,7 +694,9 @@ Api ─┬─> Application ──> Domain
 - `ProvisioningOperations(IdempotencyKey)` — UNIQUE; идемпотентность обеспечивается ограничением базы,
   а не только проверкой в памяти процесса.
 - `ProvisioningOperations(Status, CreatedAt)` — для retry и мониторинга зависших операций.
-- `AuditLogs(CreatedAt)` и `AuditLogs(EntityType, EntityId)` — для расследований.
+- `AuditEntries(CreatedAt)`, `AuditEntries(EntityType, EntityId)` и `AuditEntries(AdministratorId)` —
+  для расследований (**реализовано, Этап 7**; третий индекс добавлен сверх первоначального
+  проекта раздела 18, так как просмотр действий одного администратора -- отдельный частый запрос).
 
 > Исправлено в версии 0.2: прежняя редакция предписывала индекс `ProvisioningOperations(Status, UpdatedAt)`,
 > хотя колонки `UpdatedAt` в этой таблице нет. Жизненный цикл операции описывают `CreatedAt`, `StartedAt`,
@@ -781,25 +783,33 @@ Success 200:
 отсутствовали activate/deactivate, refresh/logout, операции и аудит, а маршрут директора был в единственном
 числе (`/director` вместо `/directors`).
 
-| Метод и маршрут | Назначение | Защита |
-|---|---|---|
-| `POST /api/v1/admin/auth/login` | Вход системного администратора. | Rate limit, lockout, audit. |
-| `POST /api/v1/admin/auth/refresh` | Обновить access token. | Ротация refresh token, audit. |
-| `POST /api/v1/admin/auth/logout` | Завершить сессию. | Отзыв refresh token, audit. |
-| `GET /api/v1/admin/districts` | Просмотреть реестр. | SystemAdmin policy. |
-| `GET /api/v1/admin/districts/{districtId}` | Карточка округа. | SystemAdmin policy. |
-| `POST /api/v1/admin/districts` | Создать округ. | SystemAdmin policy + validation + audit. |
-| `PUT /api/v1/admin/districts/{districtId}` | Изменить разрешённые поля округа. | Audit + cache invalidation. |
-| `POST /api/v1/admin/districts/{districtId}/activate` | Активировать округ. | Audit + cache invalidation. |
-| `POST /api/v1/admin/districts/{districtId}/deactivate` | Деактивировать округ. | Audit + cache invalidation. |
-| `POST /api/v1/admin/districts/{districtId}/directors` | Создать первого директора. | Idempotency + service auth to district + audit. |
-| `POST /api/v1/admin/districts/{districtId}/directors/reset-password` | Запустить сброс пароля. | Idempotency + audit. |
-| `GET /api/v1/admin/operations/{operationId}` | Статус операции provisioning. | SystemAdmin policy. |
-| `GET /api/v1/admin/audit` | Журнал административных действий. | SystemAdmin policy. |
+| Метод и маршрут | Назначение | Защита | Состояние |
+|---|---|---|---|
+| `POST /api/v1/admin/auth/login` | Вход системного администратора. | Rate limit*, lockout*, audit. | Реализовано (Этап 6/7). |
+| `POST /api/v1/admin/auth/refresh` | Обновить access token. | Ротация refresh token, audit только при обнаружении повторного использования. | Реализовано (Этап 6/7). |
+| `POST /api/v1/admin/auth/logout` | Завершить сессию. | Отзыв refresh token; не аудируется (раздел 21.5). | Реализовано (Этап 6). |
+| `GET /api/v1/admin/districts` | Просмотреть реестр (постраничный список). | SystemAdmin policy. | Реализовано (Этап 7). |
+| `GET /api/v1/admin/districts/{districtId}` | Карточка округа. | SystemAdmin policy. | Реализовано (Этап 7). |
+| `POST /api/v1/admin/districts` | Создать округ. | SystemAdmin policy + validation + audit (успех и каждый отказ). | Реализовано (Этап 7). |
+| `PUT /api/v1/admin/districts/{districtId}` | Изменить разрешённые поля округа. | Audit (успех и каждый отказ) + cache invalidation*. | Реализовано (Этап 7; инвалидация кеша ещё не реализована — кеша resolve пока нет). |
+| `POST /api/v1/admin/districts/{districtId}/activate` | Активировать округ. | Audit (включая идемпотентный повтор как no-op) + cache invalidation*. | Реализовано (Этап 7). |
+| `POST /api/v1/admin/districts/{districtId}/deactivate` | Деактивировать округ. | Audit (включая идемпотентный повтор как no-op) + cache invalidation*. | Реализовано (Этап 7). |
+| `POST /api/v1/admin/districts/{districtId}/directors` | Создать первого директора. | Idempotency + service auth to district + audit. | Не реализовано (Этап 8+, ждёт DistrictClient). |
+| `POST /api/v1/admin/districts/{districtId}/directors/reset-password` | Запустить сброс пароля. | Idempotency + audit. | Не реализовано (Этап 8+). |
+| `GET /api/v1/admin/operations/{operationId}` | Статус операции provisioning. | SystemAdmin policy. | Не реализовано (Этап 8+, ждёт ProvisioningOperations). |
+| `GET /api/v1/admin/audit` | Журнал административных действий (постраничный список, новые сначала). | SystemAdmin policy. | Реализовано (Этап 7). |
+
+\* Rate limiting, lockout и инвалидация кеша resolve остаются открытыми вопросами (раздел 26);
+административные endpoints работают без них до отдельного решения.
 
 - `activate` и `deactivate` вынесены в отдельные маршруты, а не в `PUT`: это разные бизнес-переходы
   с собственными отметками времени `ActivatedAt` / `DeactivatedAt` и отдельными записями аудита.
-- Изменение `ApiBaseUrl`, кода или состояния округа обязательно инвалидирует кеш resolve.
+- Изменение `ApiBaseUrl`, кода или состояния округа обязательно инвалидирует кеш resolve, когда
+  такой кеш появится; на Этапе 7 кеша ещё нет, поэтому инвалидировать пока нечего.
+- Каждый вызывающий администратор определяется из claim `sub` проверенного access token
+  (`CallingAdministrator.Resolve`, `Api/Endpoints/Administration`) и передаётся в команду как
+  `CallingAdministratorId` — так аудит атрибутирует действие конкретному администратору, а не
+  просто факту, что «кто-то с валидным токеном» его выполнил.
 
 **`auth/refresh` и `auth/logout` — РЕШЕНО (Этап 6).** Оба маршрута подтверждены: используется
 refresh token с ротацией при каждом использовании, хранимый в базе только как хеш (не PBKDF2 --
@@ -956,13 +966,48 @@ link-local/metadata-адресов -- Этап 1), `CreateDistrict` и `UpdateDi
   неизвестный email, неверный пароль и неактивный аккаунт -- строже, чем ResolveDistrict
   (раздел 19.1), поскольку этот раздел требует не раскрывать существование конкретного
   email, а администраторов немного, что делает вход реалистичной целью подбора. Внутри
-  сценарий отдельно различает `administrator.inactive` для будущего аудита (Этап 7), но
+  сценарий отдельно различает `administrator.inactive` для аудита (используется на Этапе 7), но
   наружу это никогда не отдаётся.
 
 **Остаётся открытым:** политика lockout (счётчик неудачных попыток, снятие блокировки --
 строка «Пароли» реестра раздела 26) и rate limiting (Этап 14). Вход НЕ готов к
 реальному/публичному трафику до решения обоих вопросов -- то же предупреждение, что и у
 ResolveDistrict (раздел 19.1).
+
+### 21.5 Политика аудита административных действий -- ЗАФИКСИРОВАНО (Этап 7)
+
+`AuditEntry` (раздел 18) пишется через `IAuditWriter` в Application-обработчиках; сама запись
+только *подготавливается* (`Write` — синхронный, ничего не сохраняет), а физическую фиксацию
+выполняет тот же `IUnitOfWork.SaveChangesAsync()`, которым обработчик сохраняет бизнес-изменение —
+поэтому аудит и бизнес-изменение всегда попадают в PostgreSQL одной транзакцией: либо оба, либо
+ни одного (проверено интеграционным тестом с принудительным нарушением уникального индекса).
+`IHttpContextAccessor` подключён в Infrastructure (`AuditWriter`), а не в Application: он
+обогащает запись `CorrelationId`/`IpAddress`/`UserAgent` из актуального HTTP-запроса
+непосредственно перед сохранением, и Application ни разу не видит эти поля -- обработчики
+передают в `AuditEntry` для этих трёх полей `null`, значения выставляются позже. Это единственный
+способ, которым у обоих сценариев Provisioning CLI (нет HTTP-запроса вовсе) и обычного HTTP
+endpoint работает один и тот же `AuditWriter`.
+
+Что аудируется и с каким `AdministratorId`:
+
+| Событие | Аудируется? | `AdministratorId` | Причина |
+|---|---|---|---|
+| CreateDistrict — успех и **каждый** отказ (invalid_code, invalid_url, invalid_name, code_conflict, host_not_allowed) | Да | Вызывающий администратор | Административное изменение реестра округов; отказ так же важен для расследования, как и успех. |
+| UpdateDistrict — успех и каждый отказ | Да | Вызывающий администратор | Аналогично; снимок "before" делается сразу после загрузки, до попытки мутации, чтобы частично изменённое состояние не испортило запись при последующем отказе валидации. |
+| Activate/DeactivateDistrict — успех, идемпотентный повтор (округ уже в этом статусе) и отказ | Да, включая повтор | Вызывающий администратор | Идемпотентный повтор — это реальное решение администратора подтвердить состояние, а не шум; Before и After в записи совпадают, что сигнализирует "ничего не изменилось". |
+| AdministratorLogin — вход с неизвестным email | Да | `null` (аккаунта нет) | `AfterData` содержит `attemptedEmail` (не секрет) -- виден паттерн попыток входа под несуществующие адреса. |
+| AdministratorLogin — неверный пароль известного аккаунта | Да | Известный `AdministratorId` | Внешний код ошибки не отличается от неизвестного email (раздел 21.4), но внутренняя запись аудита отличает эти два случая. |
+| AdministratorLogin — неактивный аккаунт | Да | Известный `AdministratorId` | `AfterData` содержит внутренний код `administrator.inactive`, отдельно от `invalid_credentials`. |
+| AdministratorLogin — успех | Да | Известный `AdministratorId` | Обычный успешный вход. |
+| RefreshAdministratorSession — обычная ротация (используемый токен ещё активен) | **Нет** | -- | Осознанное решение владельца продукта: рутинная ротация происходит при каждом вызове API и не несёт сигнала -- это шум, а не событие безопасности. |
+| RefreshAdministratorSession — обнаружено повторное использование уже отозванного токена | Да | Известный `AdministratorId` | Признак кражи/replay; `AfterData` содержит `revokedSessionCount`. Единственный аудируемый путь refresh. |
+| AdministratorLogout | **Нет** | -- | Осознанное решение владельца продукта: рутинная операция, не событие безопасности и не бизнес-событие. |
+| CreateAdministrator (через Provisioning CLI) — успех | Да | `null` (нет вызывающего HTTP-администратора — операция запускается локально с секретом окружения) | `EntityId` = Id нового администратора. |
+| CreateAdministrator (через Provisioning CLI) — отказ | Да | `null` | `AfterData` содержит `attemptedEmail` и код ошибки. |
+| ListDistricts, GetDistrict, ListAuditEntries | **Нет** | -- | Read-only запросы не изменяют состояние; аудит самого чтения журнала аудита создал бы бесконечную рекурсию сигнала. |
+
+Все решения этой таблицы приняты владельцем продукта явно, построчно, 25 сентября 2026 года --
+не выведены разработчиком по умолчанию.
 
 ---
 

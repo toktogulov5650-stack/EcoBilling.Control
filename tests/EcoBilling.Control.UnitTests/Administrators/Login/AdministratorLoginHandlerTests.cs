@@ -12,6 +12,7 @@ public sealed class AdministratorLoginHandlerTests
         FakeAdministratorRepository Administrators,
         FakeRefreshTokenRepository RefreshTokens,
         FakePasswordHasher PasswordHasher,
+        FakeAuditWriter AuditWriter,
         FakeUnitOfWork UnitOfWork,
         AdministratorLoginHandler Handler);
 
@@ -20,12 +21,13 @@ public sealed class AdministratorLoginHandlerTests
         var administrators = new FakeAdministratorRepository();
         var refreshTokens = new FakeRefreshTokenRepository();
         var passwordHasher = new FakePasswordHasher();
+        var auditWriter = new FakeAuditWriter();
         var unitOfWork = new FakeUnitOfWork();
         var accessTokenIssuer = new FakeAccessTokenIssuer(TimeSpan.FromMinutes(15));
         var handler = new AdministratorLoginHandler(
-            administrators, refreshTokens, passwordHasher, accessTokenIssuer, unitOfWork, new FixedClock(Now));
+            administrators, refreshTokens, passwordHasher, accessTokenIssuer, auditWriter, unitOfWork, new FixedClock(Now));
 
-        return new Fixture(administrators, refreshTokens, passwordHasher, unitOfWork, handler);
+        return new Fixture(administrators, refreshTokens, passwordHasher, auditWriter, unitOfWork, handler);
     }
 
     private static Administrator SeedAdministrator(
@@ -58,7 +60,7 @@ public sealed class AdministratorLoginHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_RejectsAnUnknownEmail()
+    public async Task HandleAsync_RejectsAnUnknownEmail_AndAuditsItWithNoAdministratorId()
     {
         var fixture = NewFixture();
 
@@ -68,13 +70,21 @@ public sealed class AdministratorLoginHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("administrator.invalid_credentials", result.Error.Code);
+
+        // Stage 7 decision: audited anyway -- AdministratorId is null (no account
+        // exists), and the attempted email (not a secret) is recorded so a pattern of
+        // attempts against non-existent accounts is visible.
+        var entry = Assert.Single(fixture.AuditWriter.Entries);
+        Assert.Equal("administrator.login_failed", entry.Action);
+        Assert.Null(entry.AdministratorId);
+        Assert.Contains("unknown@example.com", entry.AfterData!);
     }
 
     [Fact]
-    public async Task HandleAsync_RejectsAWrongPassword()
+    public async Task HandleAsync_RejectsAWrongPassword_AndAuditsItWithTheKnownAdministratorId()
     {
         var fixture = NewFixture();
-        SeedAdministrator(fixture.Administrators, fixture.PasswordHasher);
+        var administrator = SeedAdministrator(fixture.Administrators, fixture.PasswordHasher);
 
         var result = await fixture.Handler.HandleAsync(
             new AdministratorLoginCommand("admin@example.com", "wrong-password"),
@@ -82,14 +92,18 @@ public sealed class AdministratorLoginHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("administrator.invalid_credentials", result.Error.Code);
+
+        var entry = Assert.Single(fixture.AuditWriter.Entries);
+        Assert.Equal("administrator.login_failed", entry.Action);
+        Assert.Equal(administrator.Id.Value, entry.AdministratorId);
     }
 
     [Fact]
-    public async Task HandleAsync_RejectsAnInactiveAdministrator_WithADistinctInternalErrorCode()
+    public async Task HandleAsync_RejectsAnInactiveAdministrator_WithADistinctInternalErrorCode_AndAuditsIt()
     {
         // The Api layer collapses this onto administrator.invalid_credentials (Stage 6
-        // design decision); the handler itself must still report the real reason for a
-        // future audit trail (Stage 7) to use.
+        // design decision); the handler itself still reports the real reason, and the
+        // audit entry records that specific reason too (Stage 7).
         var fixture = NewFixture();
         SeedAdministrator(fixture.Administrators, fixture.PasswordHasher, isActive: false);
 
@@ -99,6 +113,10 @@ public sealed class AdministratorLoginHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal("administrator.inactive", result.Error.Code);
+
+        var entry = Assert.Single(fixture.AuditWriter.Entries);
+        Assert.Equal("administrator.login_failed", entry.Action);
+        Assert.Contains("administrator.inactive", entry.AfterData!);
     }
 
     [Fact]
@@ -135,6 +153,10 @@ public sealed class AdministratorLoginHandlerTests
         Assert.Single(fixture.RefreshTokens.Added);
         Assert.Equal(administrator.Id, fixture.RefreshTokens.Added[0].AdministratorId);
         Assert.Equal(1, fixture.UnitOfWork.SaveChangesCallCount);
+
+        var entry = Assert.Single(fixture.AuditWriter.Entries);
+        Assert.Equal("administrator.login_succeeded", entry.Action);
+        Assert.Equal(administrator.Id.Value, entry.AdministratorId);
     }
 
     [Fact]

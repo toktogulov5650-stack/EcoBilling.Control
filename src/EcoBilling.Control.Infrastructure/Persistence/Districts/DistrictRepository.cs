@@ -20,4 +20,14 @@ public sealed class DistrictRepository(ControlDbContext dbContext) : IDistrictRe
             .SingleOrDefaultAsync(d => d.Id == id, cancellationToken);
 
     public void Add(District district) => dbContext.Districts.Add(district);
+
+    public async Task<PagedResult<District>> ListAsync(int skip, int take, CancellationToken cancellationToken)
+    {
+        var query = dbContext.Districts.AsNoTracking().OrderBy(d => d.NormalizedCode);
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var items = await query.Skip(skip).Take(take).ToListAsync(cancellationToken);
+
+        return new PagedResult<District>(items, totalCount);
+    }
 }

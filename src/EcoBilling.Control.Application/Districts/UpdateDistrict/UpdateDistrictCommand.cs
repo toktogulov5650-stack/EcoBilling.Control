@@ -1,4 +1,5 @@
 using EcoBilling.Control.Application.Abstractions;
+using EcoBilling.Control.Domain.Administrators;
 using EcoBilling.Control.Domain.Districts;
 
 namespace EcoBilling.Control.Application.Districts.UpdateDistrict;
@@ -10,5 +11,13 @@ namespace EcoBilling.Control.Application.Districts.UpdateDistrict;
 /// through ActivateDistrict/DeactivateDistrict instead, since those are separate
 /// business transitions with their own timestamps, not a field edit.
 /// </summary>
-public sealed record UpdateDistrictCommand(DistrictId DistrictId, string? Name, string? ApiBaseUrl)
-    : ICommand<Unit>;
+/// <param name="CallingAdministratorId">
+/// The authenticated administrator making this request, sourced by the endpoint from the
+/// validated access token's "sub" claim -- purely so this handler can attribute the
+/// audit entry (Stage 7) to the right actor.
+/// </param>
+public sealed record UpdateDistrictCommand(
+    DistrictId DistrictId,
+    string? Name,
+    string? ApiBaseUrl,
+    AdministratorId CallingAdministratorId) : ICommand<Unit>;

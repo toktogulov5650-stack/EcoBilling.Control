@@ -33,4 +33,11 @@ internal sealed class FakeDistrictRepository : IDistrictRepository
         Added.Add(district);
         Seed(district);
     }
+
+    public Task<PagedResult<District>> ListAsync(int skip, int take, CancellationToken cancellationToken)
+    {
+        var ordered = _byId.Values.OrderBy(d => d.NormalizedCode, StringComparer.Ordinal).ToList();
+
+        return Task.FromResult(new PagedResult<District>(ordered.Skip(skip).Take(take).ToList(), ordered.Count));
+    }
 }

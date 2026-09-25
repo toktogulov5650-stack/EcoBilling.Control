@@ -1,4 +1,6 @@
+using System.Text.Json;
 using EcoBilling.Control.Application.Abstractions;
+using EcoBilling.Control.Application.Auditing;
 using EcoBilling.Control.Domain.Administrators;
 using EcoBilling.Control.Domain.Common;
 using DomainRefreshToken = EcoBilling.Control.Domain.Administrators.RefreshToken;
@@ -17,11 +19,16 @@ namespace EcoBilling.Control.Application.Administrators.RefreshAdministratorSess
 /// response is to revoke every other currently-active session for that administrator,
 /// forcing a full re-login everywhere, on the theory that an attacker who captured one
 /// refresh token may have captured others issued around the same time.
+///
+/// Only the reuse-detection case is audited (Stage 7 decision): it is a genuine security
+/// event. Routine rotation on every ordinary refresh is deliberately not audited --
+/// it happens roughly every 15 minutes per active session, and would be noise, not signal.
 /// </remarks>
 public sealed class RefreshAdministratorSessionHandler(
     IAdministratorRepository administrators,
     IRefreshTokenRepository refreshTokens,
     IAccessTokenIssuer accessTokenIssuer,
+    IAuditWriter auditWriter,
     IUnitOfWork unitOfWork,
     IClock clock) : ICommandHandler<RefreshAdministratorSessionCommand, RefreshAdministratorSessionResult>
 {
@@ -47,7 +54,9 @@ public sealed class RefreshAdministratorSessionHandler(
         if (presented.RevokedAt is not null)
         {
             // Reuse of an already-rotated-out token: revoke everything else this
-            // administrator currently has active, then reject this attempt too.
+            // administrator currently has active, then reject this attempt too. The
+            // event itself is audited regardless of whether any other session existed
+            // to revoke -- the replay attempt is the security-relevant fact.
             var active = await refreshTokens.GetActiveByAdministratorIdAsync(presented.AdministratorId, now, cancellationToken);
 
             foreach (var token in active)
@@ -55,10 +64,20 @@ public sealed class RefreshAdministratorSessionHandler(
                 token.Revoke(now);
             }
 
-            if (active.Count > 0)
-            {
-                await unitOfWork.SaveChangesAsync(cancellationToken);
-            }
+            auditWriter.Write(new AuditEntry(
+                Guid.CreateVersion7(),
+                presented.AdministratorId.Value,
+                AuditActions.AdministratorSessionReuseDetected,
+                "Administrator",
+                presented.AdministratorId.Value.ToString(),
+                BeforeData: null,
+                AfterData: JsonSerializer.Serialize(new { revokedSessionCount = active.Count }),
+                CorrelationId: null,
+                IpAddress: null,
+                UserAgent: null,
+                now));
+
+            await unitOfWork.SaveChangesAsync(cancellationToken);
 
             return Result.Failure<RefreshAdministratorSessionResult>(AdministratorErrors.InvalidRefreshToken);
         }

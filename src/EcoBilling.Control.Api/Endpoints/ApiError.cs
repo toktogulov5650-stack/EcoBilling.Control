@@ -18,9 +18,14 @@ public static class ApiError
     private static readonly Dictionary<string, int> StatusCodesByErrorCode = new(StringComparer.Ordinal)
     {
         ["district.invalid_code"] = StatusCodes.Status400BadRequest,
+        ["district.invalid_url"] = StatusCodes.Status400BadRequest,
+        ["district.invalid_name"] = StatusCodes.Status400BadRequest,
+        ["district.host_not_allowed"] = StatusCodes.Status400BadRequest,
         ["validation.failed"] = StatusCodes.Status400BadRequest,
         ["district.not_found"] = StatusCodes.Status404NotFound,
         ["district.inactive"] = StatusCodes.Status404NotFound,
+        ["district.code_conflict"] = StatusCodes.Status409Conflict,
+        ["district.invalid_status_transition"] = StatusCodes.Status409Conflict,
         ["administrator.invalid_credentials"] = StatusCodes.Status401Unauthorized,
         ["administrator.invalid_refresh_token"] = StatusCodes.Status401Unauthorized,
     };
