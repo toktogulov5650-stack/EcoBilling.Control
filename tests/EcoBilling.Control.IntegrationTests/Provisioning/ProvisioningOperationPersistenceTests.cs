@@ -169,4 +169,65 @@ public sealed class ProvisioningOperationPersistenceTests(DatabaseFixture databa
 
         Assert.Null(found); // cascaded away with the district (FK, ON DELETE CASCADE).
     }
+
+    [Fact]
+    public async Task PartialUniqueIndex_PreventsTwoDirectorCreationOperationsForTheSameDistrict()
+    {
+        // Proves the actual race CreateDirectorHandler can lose against (Stage 9,
+        // section 1): two ProvisioningOperation rows of type DirectorCreation for the
+        // same district, each with its own distinct IdempotencyKey (so the OTHER unique
+        // index, on IdempotencyKey, cannot be what catches this) -- only the database,
+        // not the handler's own check-then-act logic, actually prevents the second one.
+        var district = NewDistrict("RACE-01");
+
+        await using var seedContext = database.CreateDbContext();
+        seedContext.Districts.Add(district);
+        await seedContext.SaveChangesAsync();
+
+        var first = ProvisioningOperation.Create(
+            ProvisioningOperationId.New(), district.Id, ProvisioningOperationType.DirectorCreation, Now);
+
+        await using var firstContext = database.CreateDbContext();
+        new ProvisioningOperationRepository(firstContext).Add(first);
+        await firstContext.SaveChangesAsync();
+
+        var second = ProvisioningOperation.Create(
+            ProvisioningOperationId.New(), district.Id, ProvisioningOperationType.DirectorCreation, Now);
+        Assert.NotEqual(first.IdempotencyKey, second.IdempotencyKey); // sanity: not the IdempotencyKey index.
+
+        await using var secondContext = database.CreateDbContext();
+        new ProvisioningOperationRepository(secondContext).Add(second);
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => secondContext.SaveChangesAsync());
+    }
+
+    [Fact]
+    public async Task PartialUniqueIndex_DoesNotRestrictPasswordResetOperations()
+    {
+        // The filter excludes PasswordReset entirely (Stage 9): two coexisting reset
+        // operations for the same district are legitimate (resets are repeatable,
+        // section 9.2), and must not be blocked by this constraint.
+        var district = NewDistrict("RACE-02");
+
+        await using var seedContext = database.CreateDbContext();
+        seedContext.Districts.Add(district);
+        await seedContext.SaveChangesAsync();
+
+        var first = ProvisioningOperation.Create(
+            ProvisioningOperationId.New(), district.Id, ProvisioningOperationType.PasswordReset, Now);
+        var second = ProvisioningOperation.Create(
+            ProvisioningOperationId.New(), district.Id, ProvisioningOperationType.PasswordReset, Now.AddMinutes(1));
+
+        await using var writeContext = database.CreateDbContext();
+        var repository = new ProvisioningOperationRepository(writeContext);
+        repository.Add(first);
+        repository.Add(second);
+
+        await writeContext.SaveChangesAsync(); // must not throw.
+
+        await using var readContext = database.CreateDbContext();
+        var readRepository = new ProvisioningOperationRepository(readContext);
+        Assert.NotNull(await readRepository.GetByIdAsync(first.Id, CancellationToken.None));
+        Assert.NotNull(await readRepository.GetByIdAsync(second.Id, CancellationToken.None));
+    }
 }

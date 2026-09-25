@@ -213,4 +213,39 @@ public sealed class CreateDirectorHandlerTests
         Assert.Equal(2, fixture.AuditWriter.Entries.Count);
         Assert.Equal("provisioning.director_creation_failed", fixture.AuditWriter.Entries[1].Action);
     }
+
+    [Fact]
+    public async Task HandleAsync_WhenSaveChangesLosesAConcurrencyRace_OnTheSuccessPath_ReturnsConcurrentConflict()
+    {
+        // Simulates the actual race from Stage 9, section 1: this request's district
+        // call succeeded, but by the time it tries to commit, a concurrent request for
+        // the same district has already committed its own DirectorCreation operation --
+        // SaveChangesOrConflictAsync (Stage 9) turns that into a failed Result, which
+        // the handler must surface as its own failed Result, not treat as success.
+        var fixture = NewFixture();
+        var district = NewActiveDistrict(fixture.Districts);
+        fixture.UnitOfWork.SaveChangesOrConflictResult = Result.Failure(UnitOfWorkErrors.ConcurrencyConflict);
+
+        var result = await fixture.Handler.HandleAsync(
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("provisioning.concurrent_conflict", result.Error.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenSaveChangesLosesAConcurrencyRace_OnTheFailurePath_ReturnsConcurrentConflict_NotTheOriginalError()
+    {
+        var fixture = NewFixture();
+        var district = NewActiveDistrict(fixture.Districts);
+        fixture.DistrictClient.CreateDirectorResult =
+            Result.Failure<DirectorCreationAcknowledged>(ProvisioningOperationErrors.DistrictUnavailable);
+        fixture.UnitOfWork.SaveChangesOrConflictResult = Result.Failure(UnitOfWorkErrors.ConcurrencyConflict);
+
+        var result = await fixture.Handler.HandleAsync(
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("provisioning.concurrent_conflict", result.Error.Code); // not district.unavailable.
+    }
 }

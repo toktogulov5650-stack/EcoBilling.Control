@@ -19,6 +19,15 @@ public static class ProvisioningOperationErrors
         "provisioning.already_completed",
         "This provisioning operation has already completed.");
 
+    /// <summary>
+    /// Two concurrent CreateDirector requests for the same district raced past the
+    /// in-memory check-then-act sequence before either committed (Stage 9); the losing
+    /// request's own retry will see the now-committed operation and reuse it correctly.
+    /// </summary>
+    public static readonly Error ConcurrentConflict = new(
+        "provisioning.concurrent_conflict",
+        "Another request for this operation is already being processed. Retry.");
+
     // The four codes below are the architecture doc's section 20.2 inter-service
     // catalogue. They are reused verbatim, not redefined per Application scenario, since
     // EcoBilling's team relies on these exact strings too (architecture doc, section 20).

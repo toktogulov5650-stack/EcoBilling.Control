@@ -96,10 +96,24 @@ public sealed class CreateDirectorHandler(
             UserAgent: null,
             now));
 
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        if (!await TrySaveChangesAsync(cancellationToken))
+        {
+            return Result.Failure<CreateDirectorResult>(ProvisioningOperationErrors.ConcurrentConflict);
+        }
 
         return Result.Success(new CreateDirectorResult(operation.Id, clientResult.Value.DirectorId));
     }
+
+    /// <summary>
+    /// Uses <see cref="IUnitOfWork.SaveChangesOrConflictAsync"/> so a losing race against
+    /// the partial unique index on <c>ProvisioningOperations(DistrictId)</c> (Stage 9) --
+    /// two concurrent CreateDirector requests for the same district both inserting a new
+    /// operation before either committed -- surfaces as a normal failed <see cref="Result"/>
+    /// instead of an unhandled exception. The losing request's own retry will see the
+    /// now-committed operation via GetLatestAsync and reuse it correctly.
+    /// </summary>
+    private async Task<bool> TrySaveChangesAsync(CancellationToken cancellationToken) =>
+        (await unitOfWork.SaveChangesOrConflictAsync(cancellationToken)).IsSuccess;
 
     /// <summary>District not found or inactive -- no <see cref="ProvisioningOperation"/> is ever created for these.</summary>
     private async Task<Result<CreateDirectorResult>> FailWithoutOperationAsync(
@@ -148,7 +162,10 @@ public sealed class CreateDirectorHandler(
             UserAgent: null,
             now));
 
-        await unitOfWork.SaveChangesAsync(cancellationToken);
+        if (!await TrySaveChangesAsync(cancellationToken))
+        {
+            return Result.Failure<CreateDirectorResult>(ProvisioningOperationErrors.ConcurrentConflict);
+        }
 
         return Result.Failure<CreateDirectorResult>(error);
     }

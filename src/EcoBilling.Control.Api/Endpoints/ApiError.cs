@@ -35,6 +35,9 @@ public static class ApiError
         ["director.already_exists"] = StatusCodes.Status409Conflict,
         ["district.unavailable"] = StatusCodes.Status503ServiceUnavailable,
         ["service.unauthorized"] = StatusCodes.Status502BadGateway,
+
+        // Stage 9: two concurrent CreateDirector requests for the same district.
+        ["provisioning.concurrent_conflict"] = StatusCodes.Status409Conflict,
     };
 
     public static IResult ToResult(Error error, HttpContext httpContext)

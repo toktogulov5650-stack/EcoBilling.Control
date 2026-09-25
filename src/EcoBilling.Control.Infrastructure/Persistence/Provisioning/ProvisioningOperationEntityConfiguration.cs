@@ -65,5 +65,20 @@ public sealed class ProvisioningOperationEntityConfiguration : IEntityTypeConfig
 
         // GetLatestAsync's query shape (Stage 8, section 9.2's idempotency-key reuse).
         builder.HasIndex(o => new { o.DistrictId, o.OperationType });
+
+        // Enforces "at most one DirectorCreation operation, ever, per district" at the
+        // database level (Stage 9) -- the same defense-in-depth reasoning as
+        // Districts(NormalizedCode) and this table's own IdempotencyKey index above.
+        // CreateDirectorHandler's own check-then-act logic (Stage 8) is correct for a
+        // single request, but two concurrent requests for the same district could both
+        // pass that check before either commits; this constraint is what actually
+        // prevents two DirectorCreation rows from ever coexisting for one district, and
+        // turns the race into a caught DbUpdateException instead of a silent duplicate.
+        // ResetDirectorPassword is deliberately excluded: password resets are repeatable
+        // by design (section 9.2), so no equivalent constraint exists for that type.
+        builder.HasIndex(o => o.DistrictId)
+            .IsUnique()
+            .HasFilter($"\"OperationType\" = '{nameof(ProvisioningOperationType.DirectorCreation)}'")
+            .HasDatabaseName("IX_ProvisioningOperations_DistrictId_DirectorCreationOnly");
     }
 }
