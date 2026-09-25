@@ -16,6 +16,7 @@ public sealed class DependencyRuleTests
     private const string Application = "EcoBilling.Control.Application";
     private const string Infrastructure = "EcoBilling.Control.Infrastructure";
     private const string Api = "EcoBilling.Control.Api";
+    private const string Provisioning = "EcoBilling.Control.Provisioning";
 
     private static readonly string[] SolutionProjects = [Domain, Application, Infrastructure, Api];
 
@@ -133,6 +134,20 @@ public sealed class DependencyRuleTests
         foreach (var project in new[] { Domain, Application, Infrastructure })
         {
             Assert.DoesNotContain(Api, SolutionLayout.ProjectReferencesOf(project), StringComparer.Ordinal);
+        }
+    }
+
+    // ---------- Provisioning ----------
+
+    [Fact]
+    public void Provisioning_IsReferencedByNoProductionProject()
+    {
+        // The provisioning console tool (Stage 6, Q4) is a leaf, consumer-only project,
+        // exactly like the test projects -- nothing in Domain/Application/Infrastructure/Api
+        // should ever depend on it.
+        foreach (var project in new[] { Domain, Application, Infrastructure, Api })
+        {
+            Assert.DoesNotContain(Provisioning, SolutionLayout.ProjectReferencesOf(project), StringComparer.Ordinal);
         }
     }
 

@@ -4,6 +4,7 @@
     <Project Path="src/EcoBilling.Control.Application/EcoBilling.Control.Application.csproj" />
     <Project Path="src/EcoBilling.Control.Domain/EcoBilling.Control.Domain.csproj" />
     <Project Path="src/EcoBilling.Control.Infrastructure/EcoBilling.Control.Infrastructure.csproj" />
+    <Project Path="src/EcoBilling.Control.Provisioning/EcoBilling.Control.Provisioning.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/EcoBilling.Control.ArchitectureTests/EcoBilling.Control.ArchitectureTests.csproj" />

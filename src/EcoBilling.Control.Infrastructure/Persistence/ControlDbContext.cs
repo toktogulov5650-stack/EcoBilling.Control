@@ -1,4 +1,6 @@
+using EcoBilling.Control.Domain.Administrators;
 using EcoBilling.Control.Domain.Districts;
+using EcoBilling.Control.Infrastructure.Persistence.Administrators;
 using EcoBilling.Control.Infrastructure.Persistence.Districts;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,8 +11,14 @@ public sealed class ControlDbContext(DbContextOptions<ControlDbContext> options)
 {
     public DbSet<District> Districts => Set<District>();
 
+    public DbSet<Administrator> Administrators => Set<Administrator>();
+
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfiguration(new DistrictEntityConfiguration());
+        modelBuilder.ApplyConfiguration(new AdministratorEntityConfiguration());
+        modelBuilder.ApplyConfiguration(new RefreshTokenEntityConfiguration());
     }
 }

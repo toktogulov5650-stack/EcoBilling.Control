@@ -1,3 +1,4 @@
+using EcoBilling.Control.Api.Endpoints.Administration;
 using EcoBilling.Control.Api.Endpoints.Public;
 using EcoBilling.Control.Api.Extensions;
 
@@ -7,6 +8,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddApplicationHandlers();
 builder.Services.AddPersistence(builder.Configuration);
 builder.Services.AddDistrictHostAllowlist(builder.Configuration);
+builder.Services.AddAdministratorAuthentication(builder.Configuration);
 
 var app = builder.Build();
 
@@ -17,10 +19,15 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }))
     .WithName("Health");
 
 app.MapResolveDistrict();
+app.MapAdministratorAuthEndpoints();
+app.MapWhoAmI();
 
 app.Run();
 

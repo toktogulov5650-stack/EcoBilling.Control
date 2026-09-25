@@ -21,6 +21,8 @@ public static class ApiError
         ["validation.failed"] = StatusCodes.Status400BadRequest,
         ["district.not_found"] = StatusCodes.Status404NotFound,
         ["district.inactive"] = StatusCodes.Status404NotFound,
+        ["administrator.invalid_credentials"] = StatusCodes.Status401Unauthorized,
+        ["administrator.invalid_refresh_token"] = StatusCodes.Status401Unauthorized,
     };
 
     public static IResult ToResult(Error error, HttpContext httpContext)
