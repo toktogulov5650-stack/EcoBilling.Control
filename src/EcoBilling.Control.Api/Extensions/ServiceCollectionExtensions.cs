@@ -1,4 +1,7 @@
+using System.Globalization;
 using System.Text;
+using System.Threading.RateLimiting;
+using EcoBilling.Control.Api.Endpoints;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Administrators.CreateAdministrator;
 using EcoBilling.Control.Application.Administrators.Login;
@@ -25,6 +28,7 @@ using EcoBilling.Control.Infrastructure.Persistence.Administrators;
 using EcoBilling.Control.Infrastructure.Persistence.Districts;
 using EcoBilling.Control.Infrastructure.Persistence.Provisioning;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.IdentityModel.Tokens;
@@ -197,4 +201,69 @@ public static class ServiceCollectionExtensions
 
         return services;
     }
+
+    /// <summary>
+    /// Registers the two named IP-partitioned rate-limiting policies this deployment
+    /// currently needs (Stage 10): resolves the "not ready for real/public traffic"
+    /// flag the architecture doc carried on both endpoints since Stage 3/6. Partitioned
+    /// by <see cref="System.Net.HttpConnectionInfo.RemoteIpAddress"/> -- correct only for
+    /// a directly internet-facing deployment; if Control ever sits behind a reverse
+    /// proxy or load balancer, every request will appear to come from the proxy's
+    /// address unless ASP.NET Core's ForwardedHeaders middleware is separately
+    /// configured and trusted. Not addressed here: the deployment topology itself is
+    /// still an open question (architecture doc, section 3.1).
+    /// </summary>
+    public static IServiceCollection AddApiRateLimiting(this IServiceCollection services)
+    {
+        services.AddRateLimiter(options =>
+        {
+            options.OnRejected = async (context, cancellationToken) =>
+            {
+                context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+
+                if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+                {
+                    context.HttpContext.Response.Headers.RetryAfter =
+                        ((int)retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+                }
+
+                await context.HttpContext.Response.WriteAsJsonAsync(
+                    new ApiErrorResponse(
+                        "rate_limit.exceeded",
+                        "Too many requests. Please retry later.",
+                        context.HttpContext.TraceIdentifier),
+                    cancellationToken);
+            };
+
+            // Fixed window: raw request volume on the login endpoint itself, regardless
+            // of which email each request targets -- catches distributed guessing across
+            // many accounts from one source, which per-account lockout cannot.
+            options.AddPolicy("admin-login", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+                ClientIp(httpContext),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    Window = TimeSpan.FromMinutes(1),
+                    PermitLimit = 20,
+                    QueueLimit = 0,
+                }));
+
+            // Sliding, not fixed: ResolveDistrict has no account concept to rate-limit
+            // by, and a sliding window avoids the fixed-window boundary-burst edge case
+            // (2x the permitted rate at a window boundary) that a fixed window would allow.
+            options.AddPolicy("resolve-district", httpContext => RateLimitPartition.GetSlidingWindowLimiter(
+                ClientIp(httpContext),
+                _ => new SlidingWindowRateLimiterOptions
+                {
+                    Window = TimeSpan.FromMinutes(1),
+                    SegmentsPerWindow = 6,
+                    PermitLimit = 30,
+                    QueueLimit = 0,
+                }));
+        });
+
+        return services;
+    }
+
+    private static string ClientIp(HttpContext httpContext) =>
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 }

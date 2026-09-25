@@ -49,5 +49,14 @@ public sealed class AdministratorEntityConfiguration : IEntityTypeConfiguration<
         builder.Property(a => a.CreatedAt).IsRequired();
         builder.Property(a => a.UpdatedAt).IsRequired();
         builder.Property(a => a.LastLoginAt);
+
+        // Login lockout bookkeeping (Stage 10) -- distinct from IsActive (an
+        // administrative on/off switch): these track a temporary, security-driven state
+        // the account recovers from on its own once LockedUntil passes or a login
+        // succeeds, not something an administrator toggles.
+        builder.Property(a => a.LockedUntil);
+        builder.Property(a => a.FailedLoginAttempts).IsRequired();
+        builder.Property(a => a.ConsecutiveLockouts).IsRequired();
+        builder.Property(a => a.LastFailedLoginAt);
     }
 }

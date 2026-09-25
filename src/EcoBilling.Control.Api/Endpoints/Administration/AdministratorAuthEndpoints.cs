@@ -13,18 +13,13 @@ public static class AdministratorAuthEndpoints
     {
         var group = app.MapGroup("/api/v1/admin/auth");
 
-        group.MapPost("/login", LoginAsync).WithName("AdministratorLogin");
+        group.MapPost("/login", LoginAsync).RequireRateLimiting("admin-login").WithName("AdministratorLogin");
         group.MapPost("/refresh", RefreshAsync).WithName("RefreshAdministratorSession");
         group.MapPost("/logout", LogoutAsync).WithName("LogoutAdministratorSession");
 
         return app;
     }
 
-    // NOTE: ships with none of its three stated protections yet (doc, section 19.2:
-    // "Rate limit, lockout, audit"). Rate limiting is Stage 14; lockout is Stage 1's
-    // still-undecided open question; audit is Stage 7. Must not be exposed to
-    // real/public traffic until Stage 14 and the lockout policy land -- the same
-    // standing caveat already on ResolveDistrict (Stage 3).
     private static async Task<IResult> LoginAsync(
         AdministratorLoginRequest request,
         ICommandHandler<AdministratorLoginCommand, AdministratorLoginResult> handler,
@@ -35,7 +30,7 @@ public static class AdministratorAuthEndpoints
 
         if (result.IsFailure)
         {
-            return ApiError.ToResult(CollapseInactive(result.Error), httpContext);
+            return ApiError.ToResult(CollapseToInvalidCredentials(result.Error), httpContext);
         }
 
         var value = result.Value;
@@ -82,13 +77,14 @@ public static class AdministratorAuthEndpoints
     }
 
     /// <summary>
-    /// Collapses <c>administrator.inactive</c> onto the exact same response as
-    /// <c>administrator.invalid_credentials</c> -- the two must be indistinguishable to
-    /// the caller (doc, section 21.2), even though the handler tracks them separately
-    /// internally for a future audit trail (Stage 7).
+    /// Collapses <c>administrator.inactive</c> and <c>administrator.locked_out</c>
+    /// (Stage 10) onto the exact same response as <c>administrator.invalid_credentials</c>
+    /// -- all three must be indistinguishable to the caller (doc, section 21.2), even
+    /// though the handler tracks them separately internally for the audit trail
+    /// (Stage 7, Stage 10).
     /// </summary>
-    private static Domain.Common.Error CollapseInactive(Domain.Common.Error error) =>
-        error.Code == AdministratorErrors.Inactive.Code
+    private static Domain.Common.Error CollapseToInvalidCredentials(Domain.Common.Error error) =>
+        error.Code == AdministratorErrors.Inactive.Code || error.Code == AdministratorErrors.LockedOut.Code
             ? AdministratorErrors.InvalidCredentials
             : error;
 }

@@ -11,6 +11,7 @@ builder.Services.AddDistrictHostAllowlist(builder.Configuration);
 builder.Services.AddAdministratorAuthentication(builder.Configuration);
 builder.Services.AddAuditing();
 builder.Services.AddDistrictClient(builder.Configuration);
+builder.Services.AddApiRateLimiting();
 
 var app = builder.Build();
 
@@ -23,6 +24,7 @@ app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }))
     .WithName("Health");

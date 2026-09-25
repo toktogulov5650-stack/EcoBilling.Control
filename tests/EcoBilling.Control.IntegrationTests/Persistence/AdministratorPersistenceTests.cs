@@ -151,6 +151,51 @@ public sealed class AdministratorPersistenceTests(DatabaseFixture database)
         Assert.Null(remainingToken);
     }
 
+    [Fact]
+    public async Task Repository_RoundTripsLockoutBookkeeping_Stage10()
+    {
+        var now = TruncateToMicroseconds(DateTimeOffset.UtcNow);
+        var administrator = NewAdministrator("lockout-roundtrip@example.com");
+        for (var i = 0; i < 4; i++)
+        {
+            administrator.RecordFailedLoginAttempt(now.AddSeconds(i));
+        }
+        administrator.RecordFailedLoginAttempt(now.AddSeconds(4)); // 5th -- triggers the lockout.
+
+        await using var writeContext = database.CreateDbContext();
+        writeContext.Administrators.Add(administrator);
+        await writeContext.SaveChangesAsync();
+
+        await using var readContext = database.CreateDbContext();
+        var found = await new AdministratorRepository(readContext).GetByIdAsync(administrator.Id, CancellationToken.None);
+
+        Assert.NotNull(found);
+        Assert.Equal(0, found.FailedLoginAttempts); // reset by the lockout trigger itself.
+        Assert.Equal(1, found.ConsecutiveLockouts);
+        Assert.Equal(administrator.LockedUntil, found.LockedUntil);
+        Assert.Equal(now.AddSeconds(4), found.LastFailedLoginAt);
+        Assert.True(found.IsLockedOut(now.AddSeconds(4)));
+    }
+
+    [Fact]
+    public async Task Repository_RoundTripsAnAdministratorWithNoLockoutHistory_AsAllDefaults()
+    {
+        var administrator = NewAdministrator("no-lockout-history@example.com");
+
+        await using var writeContext = database.CreateDbContext();
+        writeContext.Administrators.Add(administrator);
+        await writeContext.SaveChangesAsync();
+
+        await using var readContext = database.CreateDbContext();
+        var found = await new AdministratorRepository(readContext).GetByIdAsync(administrator.Id, CancellationToken.None);
+
+        Assert.NotNull(found);
+        Assert.Equal(0, found.FailedLoginAttempts);
+        Assert.Equal(0, found.ConsecutiveLockouts);
+        Assert.Null(found.LockedUntil);
+        Assert.Null(found.LastFailedLoginAt);
+    }
+
     private static DateTimeOffset TruncateToMicroseconds(DateTimeOffset value) =>
         new(value.Ticks - (value.Ticks % 10), value.Offset);
 }

@@ -35,6 +35,15 @@ public static class AdministratorErrors
         "administrator.inactive",
         "The administrator account is not active.");
 
+    // Deliberately never returned by the login endpoint itself either (Stage 10, same
+    // reasoning as Inactive above): a lockout collapses onto InvalidCredentials at the
+    // API boundary (AdministratorAuthEndpoints), so a caller cannot tell "wrong
+    // password," "inactive account" and "temporarily locked out" apart. Kept distinct
+    // here only so the audit trail can record which one actually happened.
+    public static readonly Error LockedOut = new(
+        "administrator.locked_out",
+        "The administrator account is temporarily locked out after too many failed login attempts.");
+
     public static readonly Error InvalidRefreshToken = new(
         "administrator.invalid_refresh_token",
         "The refresh token is missing, expired, or has already been used.");

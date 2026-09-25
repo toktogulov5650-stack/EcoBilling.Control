@@ -167,5 +167,31 @@ public sealed class AdministratorAuthEndpointTests : IDisposable
         Assert.Contains("administrator.invalid_credentials", wrongPasswordBody);
     }
 
+    [Fact]
+    public async Task Login_AfterFiveConsecutiveFailures_LocksTheAccount_EvenAgainstTheCorrectPasswordAfterward()
+    {
+        await SeedAdministratorAsync("lockout-e2e@example.com");
+        var client = _factory.CreateClient();
+
+        for (var i = 0; i < 5; i++)
+        {
+            var response = await client.PostAsJsonAsync(
+                "/api/v1/admin/auth/login",
+                new AdministratorLoginRequest("lockout-e2e@example.com", "wrong-password"));
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        // Even the correct password is rejected while locked out (Stage 10) -- the
+        // exact same generic response as every other failure case, never revealing that
+        // a lockout, specifically, is why this attempt failed.
+        var correctPasswordResponse = await client.PostAsJsonAsync(
+            "/api/v1/admin/auth/login",
+            new AdministratorLoginRequest("lockout-e2e@example.com", KnownPassword));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, correctPasswordResponse.StatusCode);
+        var body = await correctPasswordResponse.Content.ReadAsStringAsync();
+        Assert.Contains("administrator.invalid_credentials", body);
+    }
+
     public void Dispose() => _factory.Dispose();
 }

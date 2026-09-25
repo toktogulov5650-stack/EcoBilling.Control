@@ -19,6 +19,7 @@ public static class AuditActions
 
     public const string AdministratorLoginSucceeded = "administrator.login_succeeded";
     public const string AdministratorLoginFailed = "administrator.login_failed";
+    public const string AdministratorLockedOut = "administrator.locked_out";
     public const string AdministratorSessionReuseDetected = "administrator.session_reuse_detected";
     public const string AdministratorCreated = "administrator.created";
     public const string AdministratorCreateFailed = "administrator.create_failed";
