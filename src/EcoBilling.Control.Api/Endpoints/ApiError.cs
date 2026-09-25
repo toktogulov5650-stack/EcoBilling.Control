@@ -28,6 +28,13 @@ public static class ApiError
         ["district.invalid_status_transition"] = StatusCodes.Status409Conflict,
         ["administrator.invalid_credentials"] = StatusCodes.Status401Unauthorized,
         ["administrator.invalid_refresh_token"] = StatusCodes.Status401Unauthorized,
+
+        // Stage 8: CreateDirector / ResetDirectorPassword / GetProvisioningOperation.
+        ["provisioning.operation_not_found"] = StatusCodes.Status404NotFound,
+        ["director.not_found"] = StatusCodes.Status404NotFound,
+        ["director.already_exists"] = StatusCodes.Status409Conflict,
+        ["district.unavailable"] = StatusCodes.Status503ServiceUnavailable,
+        ["service.unauthorized"] = StatusCodes.Status502BadGateway,
     };
 
     public static IResult ToResult(Error error, HttpContext httpContext)

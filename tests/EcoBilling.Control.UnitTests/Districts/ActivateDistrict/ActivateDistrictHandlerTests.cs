@@ -61,9 +61,23 @@ public sealed class ActivateDistrictHandlerTests
         // an error) stays strict; this handler never reaches that path on a repeat
         // call. Stage 7 decision: the no-op is still audited -- Before and After are
         // identical, which is itself the record that nothing changed.
+        //
+        // This test cannot spy on District.Activate() directly (District is a concrete
+        // Domain entity, not called through a mockable interface), so it instead relies
+        // on a fact proven directly from Domain.Activate()'s own source (District.cs):
+        // on an already-active district, Activate() ALWAYS fails before mutating
+        // anything -- Status/ActivatedAt/UpdatedAt are untouched on that path, and
+        // mutation only ever happens together with Result.Success(). That makes
+        // "IsSuccess + district.activated action" and "Activate() was never invoked"
+        // equivalent outcomes here: if a regression removed the handler's `if
+        // (district.IsActive)` short-circuit and called Activate() unconditionally,
+        // Domain's guard would turn this into a failure (caught below), and if instead
+        // Domain's own invariant were loosened to make Activate() silently idempotent,
+        // ActivatedAt/UpdatedAt would be overwritten to `Later` (also caught below).
         var district = NewDistrict();
         district.Activate(Now);
         var originalActivatedAt = district.ActivatedAt;
+        var originalUpdatedAt = district.UpdatedAt;
         var repository = new FakeDistrictRepository();
         repository.Seed(district);
         var auditWriter = new FakeAuditWriter();
@@ -74,6 +88,7 @@ public sealed class ActivateDistrictHandlerTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(originalActivatedAt, district.ActivatedAt); // unchanged -- Activate() was never called again
+        Assert.Equal(originalUpdatedAt, district.UpdatedAt); // unchanged -- second, independent proof of no mutation
         Assert.Equal(1, unitOfWork.SaveChangesCallCount); // the no-op audit entry still commits
         Assert.Equal("district.activated", auditWriter.Entries[0].Action);
         Assert.Equal(auditWriter.Entries[0].BeforeData, auditWriter.Entries[0].AfterData); // identical -- signals "nothing changed"

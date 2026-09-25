@@ -12,16 +12,23 @@ using EcoBilling.Control.Application.Districts.GetDistrict;
 using EcoBilling.Control.Application.Districts.ListDistricts;
 using EcoBilling.Control.Application.Districts.ResolveDistrict;
 using EcoBilling.Control.Application.Districts.UpdateDistrict;
+using EcoBilling.Control.Application.Provisioning.CreateDirector;
+using EcoBilling.Control.Application.Provisioning.GetProvisioningOperation;
+using EcoBilling.Control.Application.Provisioning.ResetDirectorPassword;
 using EcoBilling.Control.Infrastructure;
 using EcoBilling.Control.Infrastructure.Auditing;
 using EcoBilling.Control.Infrastructure.Authentication;
+using EcoBilling.Control.Infrastructure.DistrictClients;
 using EcoBilling.Control.Infrastructure.Districts;
 using EcoBilling.Control.Infrastructure.Persistence;
 using EcoBilling.Control.Infrastructure.Persistence.Administrators;
 using EcoBilling.Control.Infrastructure.Persistence.Districts;
+using EcoBilling.Control.Infrastructure.Persistence.Provisioning;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.IdentityModel.Tokens;
+using Polly;
 
 namespace EcoBilling.Control.Api.Extensions;
 
@@ -42,6 +49,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IQueryHandler<GetDistrictQuery, GetDistrictResult>, GetDistrictHandler>();
         services.AddScoped<IQueryHandler<ListDistrictsQuery, ListDistrictsResult>, ListDistrictsHandler>();
         services.AddScoped<IQueryHandler<ListAuditEntriesQuery, ListAuditEntriesResult>, ListAuditEntriesHandler>();
+        services.AddScoped<ICommandHandler<CreateDirectorCommand, CreateDirectorResult>, CreateDirectorHandler>();
+        services.AddScoped<ICommandHandler<ResetDirectorPasswordCommand, ResetDirectorPasswordResult>, ResetDirectorPasswordHandler>();
+        services.AddScoped<IQueryHandler<GetProvisioningOperationQuery, GetProvisioningOperationResult>, GetProvisioningOperationHandler>();
         services.AddSingleton<IClock, SystemClock>();
 
         return services;
@@ -70,7 +80,50 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDistrictRepository, DistrictRepository>();
         services.AddScoped<IAdministratorRepository, AdministratorRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+        services.AddScoped<IProvisioningOperationRepository, ProvisioningOperationRepository>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the signed service-assertion issuer (Stage 8, section 9.1) and the named
+    /// <c>HttpClient</c> <see cref="DistrictClient"/> calls a district's internal API
+    /// through, with timeout + retry (10s per attempt, 3 attempts total, exponential
+    /// backoff -- section 9.3) attached via <c>Microsoft.Extensions.Http.Resilience</c>.
+    /// </summary>
+    public static IServiceCollection AddDistrictClient(this IServiceCollection services, IConfiguration configuration)
+    {
+        var serviceAuthOptions = configuration.GetSection(ServiceAssertionOptions.SectionName).Get<ServiceAssertionOptions>()
+            ?? new ServiceAssertionOptions();
+
+        if (string.IsNullOrWhiteSpace(serviceAuthOptions.SigningKeyPem))
+        {
+            throw new InvalidOperationException(
+                $"Missing required configuration '{ServiceAssertionOptions.SectionName}:SigningKeyPem'. " +
+                "Set it via configuration or an environment variable; never commit a real one to appsettings.json.");
+        }
+
+        services.Configure<ServiceAssertionOptions>(configuration.GetSection(ServiceAssertionOptions.SectionName));
+        services.AddSingleton<IServiceAssertionIssuer, ServiceAssertionIssuer>();
+        services.AddScoped<IDistrictClient, DistrictClient>();
+
+        services.AddHttpClient(DistrictClient.HttpClientName)
+            .AddResilienceHandler("district-client", builder =>
+            {
+                builder.AddRetry(new HttpRetryStrategyOptions
+                {
+                    MaxRetryAttempts = 2, // + the first attempt = 3 attempts total.
+                    BackoffType = DelayBackoffType.Exponential,
+                    Delay = TimeSpan.FromSeconds(1),
+                    UseJitter = true,
+                });
+
+                // Inside the retry (added second = inner), so every individual attempt
+                // -- including each retry -- gets its own fresh 10-second budget, rather
+                // than one 10-second budget shared across all 3 attempts.
+                builder.AddTimeout(TimeSpan.FromSeconds(10));
+            });
 
         return services;
     }

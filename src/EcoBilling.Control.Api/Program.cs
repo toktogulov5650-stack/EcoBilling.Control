@@ -10,6 +10,7 @@ builder.Services.AddPersistence(builder.Configuration);
 builder.Services.AddDistrictHostAllowlist(builder.Configuration);
 builder.Services.AddAdministratorAuthentication(builder.Configuration);
 builder.Services.AddAuditing();
+builder.Services.AddDistrictClient(builder.Configuration);
 
 var app = builder.Build();
 
@@ -31,6 +32,7 @@ app.MapAdministratorAuthEndpoints();
 app.MapWhoAmI();
 app.MapDistrictAdministrationEndpoints();
 app.MapAuditEndpoints();
+app.MapProvisioningEndpoints();
 
 app.Run();
 
