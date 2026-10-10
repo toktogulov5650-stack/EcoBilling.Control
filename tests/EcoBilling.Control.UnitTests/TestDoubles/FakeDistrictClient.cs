@@ -19,7 +19,7 @@ internal sealed class FakeDistrictClient : IDistrictClient
 
     public List<(District District, CreateDirectorRequest Request, string IdempotencyKey)> CreateDirectorCalls { get; } = [];
 
-    public List<(District District, string DirectorEmail, string IdempotencyKey)> ResetDirectorPasswordCalls { get; } = [];
+    public List<(District District, string DirectorEmail, string NewPassword, string IdempotencyKey)> ResetDirectorPasswordCalls { get; } = [];
 
     public Task<Result<DirectorCreationAcknowledged>> CreateDirectorAsync(
         District district, CreateDirectorRequest request, string idempotencyKey, CancellationToken cancellationToken)
@@ -30,9 +30,9 @@ internal sealed class FakeDistrictClient : IDistrictClient
     }
 
     public Task<Result> ResetDirectorPasswordAsync(
-        District district, string directorEmail, string idempotencyKey, CancellationToken cancellationToken)
+        District district, string directorEmail, string newPassword, string idempotencyKey, CancellationToken cancellationToken)
     {
-        ResetDirectorPasswordCalls.Add((district, directorEmail, idempotencyKey));
+        ResetDirectorPasswordCalls.Add((district, directorEmail, newPassword, idempotencyKey));
 
         return Task.FromResult(ResetDirectorPasswordResult);
     }

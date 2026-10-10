@@ -30,6 +30,9 @@ dotnet run --project src/EcoBilling.Control.Api/EcoBilling.Control.Api.csproj
 
 После запуска техническая проверка API доступна по адресу `/health`.
 
+Инструкция по production-развёртыванию с Neon, Secret Manager, Artifact Registry и
+Google Cloud Run находится в [docs/deployment/README.md](docs/deployment/README.md).
+
 ## Статус
 
 Создан архитектурный каркас. Схема PostgreSQL, аутентификация администратора и бизнес-сценарии будут реализованы отдельными этапами.

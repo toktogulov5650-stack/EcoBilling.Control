@@ -53,7 +53,7 @@ public sealed class CreateDirectorHandlerTests
         var fixture = NewFixture();
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(DistrictId.New(), "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(DistrictId.New(), "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("district.not_found", result.Error.Code);
@@ -71,7 +71,7 @@ public sealed class CreateDirectorHandlerTests
         fixture.Districts.Seed(district);
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("district.inactive", result.Error.Code);
@@ -89,7 +89,22 @@ public sealed class CreateDirectorHandlerTests
         var district = NewActiveDistrict(fixture.Districts);
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, fullName, email, Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, fullName, email, "DirectorPass123!", Caller), CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("validation.failed", result.Error.Code);
+        Assert.Empty(fixture.DistrictClient.CreateDirectorCalls);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ReturnsValidationFailed_WhenPasswordIsMissing()
+    {
+        var fixture = NewFixture();
+        var district = NewActiveDistrict(fixture.Districts);
+
+        var result = await fixture.Handler.HandleAsync(
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "   ", Caller),
+            CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("validation.failed", result.Error.Code);
@@ -103,7 +118,7 @@ public sealed class CreateDirectorHandlerTests
         var district = NewActiveDistrict(fixture.Districts);
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal("director-id", result.Value.DirectorId);
@@ -117,6 +132,7 @@ public sealed class CreateDirectorHandlerTests
         Assert.Equal(operation.IdempotencyKey, call.IdempotencyKey);
         Assert.Equal("Director", call.Request.FullName);
         Assert.Equal("director@example.com", call.Request.Email);
+        Assert.Equal("DirectorPass123!", call.Request.Password);
     }
 
     [Fact]
@@ -126,7 +142,7 @@ public sealed class CreateDirectorHandlerTests
         var district = NewActiveDistrict(fixture.Districts);
 
         await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         var entry = Assert.Single(fixture.AuditWriter.Entries);
         Assert.Equal("provisioning.director_creation_succeeded", entry.Action);
@@ -139,6 +155,7 @@ public sealed class CreateDirectorHandlerTests
         // created," not which one.
         Assert.Contains("director-id", entry.AfterData!);
         Assert.Contains("director@example.com", entry.AfterData!);
+        Assert.DoesNotContain("DirectorPass123!", entry.AfterData!);
     }
 
     [Fact]
@@ -150,7 +167,7 @@ public sealed class CreateDirectorHandlerTests
             Result.Failure<DirectorCreationAcknowledged>(ProvisioningOperationErrors.DistrictUnavailable);
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("district.unavailable", result.Error.Code);
@@ -173,7 +190,7 @@ public sealed class CreateDirectorHandlerTests
             Result.Failure<DirectorCreationAcknowledged>(ProvisioningOperationErrors.DistrictUnavailable);
 
         await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         var firstOperationId = fixture.Operations.Added[0].Id;
         var firstIdempotencyKey = fixture.Operations.Added[0].IdempotencyKey;
@@ -182,7 +199,7 @@ public sealed class CreateDirectorHandlerTests
         fixture.DistrictClient.CreateDirectorResult = Result.Success(new DirectorCreationAcknowledged("director-id"));
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(firstOperationId, result.Value.OperationId); // same operation, not a new one.
@@ -199,11 +216,11 @@ public sealed class CreateDirectorHandlerTests
         var district = NewActiveDistrict(fixture.Districts);
 
         await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
         Assert.Single(fixture.DistrictClient.CreateDirectorCalls); // sanity: the first call did happen.
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("director.already_exists", result.Error.Code);
@@ -227,7 +244,7 @@ public sealed class CreateDirectorHandlerTests
         fixture.UnitOfWork.SaveChangesOrConflictResult = Result.Failure(UnitOfWorkErrors.ConcurrencyConflict);
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("provisioning.concurrent_conflict", result.Error.Code);
@@ -243,7 +260,7 @@ public sealed class CreateDirectorHandlerTests
         fixture.UnitOfWork.SaveChangesOrConflictResult = Result.Failure(UnitOfWorkErrors.ConcurrencyConflict);
 
         var result = await fixture.Handler.HandleAsync(
-            new CreateDirectorCommand(district.Id, "Director", "director@example.com", Caller), CancellationToken.None);
+            new CreateDirectorCommand(district.Id, "Director", "director@example.com", "DirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("provisioning.concurrent_conflict", result.Error.Code); // not district.unavailable.

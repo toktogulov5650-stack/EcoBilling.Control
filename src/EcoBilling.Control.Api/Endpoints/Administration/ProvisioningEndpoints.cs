@@ -39,7 +39,8 @@ public static class ProvisioningEndpoints
         CancellationToken cancellationToken)
     {
         var command = new CreateDirectorCommand(
-            new DistrictId(districtId), request.FullName, request.Email, CallingAdministrator.Resolve(httpContext));
+            new DistrictId(districtId), request.FullName, request.Email, request.Password,
+            CallingAdministrator.Resolve(httpContext));
 
         var result = await handler.HandleAsync(command, cancellationToken);
 
@@ -61,7 +62,8 @@ public static class ProvisioningEndpoints
         CancellationToken cancellationToken)
     {
         var command = new ResetDirectorPasswordCommand(
-            new DistrictId(districtId), request.DirectorEmail, CallingAdministrator.Resolve(httpContext));
+            new DistrictId(districtId), request.Email, request.NewPassword,
+            CallingAdministrator.Resolve(httpContext));
 
         var result = await handler.HandleAsync(command, cancellationToken);
 
@@ -105,11 +107,19 @@ public static class ProvisioningEndpoints
     }
 }
 
-public sealed record CreateDirectorHttpRequest(string? FullName, string? Email);
+public sealed record CreateDirectorHttpRequest(string? FullName, string? Email, string? Password)
+{
+    public override string ToString() =>
+        $"{nameof(CreateDirectorHttpRequest)} {{ FullName = [REDACTED], Email = [REDACTED], Password = [REDACTED] }}";
+}
 
 public sealed record CreateDirectorHttpResponse(string OperationId, string DirectorId);
 
-public sealed record ResetDirectorPasswordHttpRequest(string? DirectorEmail);
+public sealed record ResetDirectorPasswordHttpRequest(string? Email, string? NewPassword)
+{
+    public override string ToString() =>
+        $"{nameof(ResetDirectorPasswordHttpRequest)} {{ Email = [REDACTED], NewPassword = [REDACTED] }}";
+}
 
 public sealed record ResetDirectorPasswordHttpResponse(string OperationId);
 

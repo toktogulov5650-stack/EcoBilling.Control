@@ -5,8 +5,8 @@ using EcoBilling.Control.Domain.Districts;
 namespace EcoBilling.Control.Application.Provisioning.CreateDirector;
 
 /// <summary>
-/// Asks a district to create its first director. Carries no credential (Stage 8, section
-/// 9.4): EcoBilling generates and delivers the director's initial password itself.
+/// Asks a district to create its first director with an administrator-selected password.
+/// The password is forwarded to the district and is never persisted or audited by Control.
 /// </summary>
 /// <param name="CallingAdministratorId">
 /// The authenticated administrator making this request, purely so this handler can
@@ -17,4 +17,9 @@ public sealed record CreateDirectorCommand(
     DistrictId DistrictId,
     string? FullName,
     string? Email,
-    AdministratorId CallingAdministratorId) : ICommand<CreateDirectorResult>;
+    string? Password,
+    AdministratorId CallingAdministratorId) : ICommand<CreateDirectorResult>
+{
+    public override string ToString() =>
+        $"{nameof(CreateDirectorCommand)} {{ DistrictId = {DistrictId}, FullName = [REDACTED], Email = [REDACTED], Password = [REDACTED], CallingAdministratorId = {CallingAdministratorId} }}";
+}

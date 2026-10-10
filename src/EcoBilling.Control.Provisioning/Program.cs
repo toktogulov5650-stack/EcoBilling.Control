@@ -1,10 +1,13 @@
 using System.Text;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Application.Administrators.CreateAdministrator;
+using EcoBilling.Control.Application.Administrators.ResetAdministratorPassword;
 using EcoBilling.Control.Infrastructure;
+using EcoBilling.Control.Infrastructure.Auditing;
 using EcoBilling.Control.Infrastructure.Authentication;
 using EcoBilling.Control.Infrastructure.Persistence;
 using EcoBilling.Control.Infrastructure.Persistence.Administrators;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,16 +21,19 @@ using Microsoft.Extensions.DependencyInjection;
 // additional secret -- adding one would defeat the point of moving provisioning out of
 // the web process to avoid managing secrets in the first place.
 
-if (args.Length != 2)
+var migrateOnly = args is ["migrate"];
+var resetAdministratorPassword = args is ["reset-admin-password", _];
+
+if (!migrateOnly && !resetAdministratorPassword && args.Length != 2)
 {
-    Console.Error.WriteLine("Usage: EcoBilling.Control.Provisioning <email> <full-name>");
+    Console.Error.WriteLine("Usage:");
+    Console.Error.WriteLine("  EcoBilling.Control.Provisioning migrate");
+    Console.Error.WriteLine("  EcoBilling.Control.Provisioning <email> <full-name>");
+    Console.Error.WriteLine("  EcoBilling.Control.Provisioning reset-admin-password <email>");
     Console.Error.WriteLine("The password is prompted for separately and never accepted as a command-line argument.");
 
     return 1;
 }
-
-var email = args[0];
-var fullName = args[1];
 
 var configuration = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json", optional: true)
@@ -40,17 +46,63 @@ var connectionString = configuration.GetConnectionString("Database")
         "Set it via the ConnectionStrings__Database environment variable.");
 
 var services = new ServiceCollection();
-services.AddDbContext<ControlDbContext>(options => options.UseNpgsql(connectionString));
+services.AddDbContext<ControlDbContext>(options => options.UseNpgsql(
+    connectionString,
+    npgsql => npgsql.EnableRetryOnFailure(
+        maxRetryCount: 3,
+        maxRetryDelay: TimeSpan.FromSeconds(5),
+        errorCodesToAdd: null)));
 services.AddScoped<IAdministratorRepository, AdministratorRepository>();
+services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 services.AddScoped<IUnitOfWork, EfUnitOfWork>();
+services.AddSingleton<IHttpContextAccessor, ProvisioningHttpContextAccessor>();
+services.AddScoped<IAuditWriter, AuditWriter>();
 services.AddSingleton<IPasswordHasher, PasswordHasher>();
 services.AddSingleton<IClock, SystemClock>();
 services.AddScoped<ICommandHandler<CreateAdministratorCommand, CreateAdministratorResult>, CreateAdministratorHandler>();
+services.AddScoped<ICommandHandler<ResetAdministratorPasswordCommand, ResetAdministratorPasswordResult>, ResetAdministratorPasswordHandler>();
 
-await using var provider = services.BuildServiceProvider();
+await using var provider = services.BuildServiceProvider(new ServiceProviderOptions
+{
+    ValidateOnBuild = true,
+    ValidateScopes = true,
+});
 await using var scope = provider.CreateAsyncScope();
 
-var password = ReadPassword();
+if (migrateOnly)
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<ControlDbContext>();
+    await dbContext.Database.MigrateAsync();
+    Console.WriteLine("Database migrations applied successfully.");
+
+    return 0;
+}
+
+if (resetAdministratorPassword)
+{
+    var resetEmail = args[1];
+    var newPassword = ReadPassword("New password (min 12 characters): ");
+    var resetHandler = scope.ServiceProvider.GetRequiredService<
+        ICommandHandler<ResetAdministratorPasswordCommand, ResetAdministratorPasswordResult>>();
+    var resetResult = await resetHandler.HandleAsync(
+        new ResetAdministratorPasswordCommand(resetEmail, newPassword),
+        CancellationToken.None);
+
+    if (resetResult.IsFailure)
+    {
+        Console.Error.WriteLine($"Failed: {resetResult.Error.Code} -- {resetResult.Error.Message}");
+
+        return 1;
+    }
+
+    Console.WriteLine($"Reset password for administrator {resetResult.Value.NormalizedEmail} ({resetResult.Value.AdministratorId}).");
+
+    return 0;
+}
+
+var email = args[0];
+var fullName = args[1];
+var password = ReadPassword("Password (min 12 characters): ");
 
 var handler = scope.ServiceProvider.GetRequiredService<ICommandHandler<CreateAdministratorCommand, CreateAdministratorResult>>();
 var result = await handler.HandleAsync(new CreateAdministratorCommand(email, fullName, password), CancellationToken.None);
@@ -70,9 +122,9 @@ return 0;
 // it never appears on screen or in shell/terminal scrollback. Falls back to an
 // unmasked ReadLine only when stdin is redirected (piped input, CI), where masking is
 // impossible anyway and Console.ReadKey would throw.
-static string ReadPassword()
+static string ReadPassword(string prompt)
 {
-    Console.Write("Password (min 12 characters): ");
+    Console.Write(prompt);
 
     if (Console.IsInputRedirected)
     {
@@ -102,4 +154,13 @@ static string ReadPassword()
     Console.WriteLine();
 
     return password.ToString();
+}
+
+/// <summary>
+/// Provisioning runs outside an HTTP request, so audit entries intentionally have no
+/// request correlation, IP address or user-agent metadata.
+/// </summary>
+internal sealed class ProvisioningHttpContextAccessor : IHttpContextAccessor
+{
+    public HttpContext? HttpContext { get; set; }
 }

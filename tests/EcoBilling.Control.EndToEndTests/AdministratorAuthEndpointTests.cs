@@ -20,7 +20,7 @@ public sealed class AdministratorAuthEndpointTests : IDisposable
 
     public AdministratorAuthEndpointTests(DatabaseFixture database)
     {
-        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        _factory = TestApplicationFactory.Create().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("ConnectionStrings:Database", database.ConnectionString);
             // Explicit, not relying on appsettings.Development.json loading implicitly:

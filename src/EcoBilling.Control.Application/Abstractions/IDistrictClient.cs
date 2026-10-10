@@ -4,12 +4,14 @@ using EcoBilling.Control.Domain.Districts;
 namespace EcoBilling.Control.Application.Abstractions;
 
 /// <summary>
-/// Requests Control's own CreateDirector command carries -- <c>fullName</c>/<c>email</c>
-/// only. No credential field exists here at all (Stage 8, section 9.4): EcoBilling owns
-/// generating the director's initial credential and communicating it to them; Control
-/// never receives, holds, or transmits a director password in any form.
+/// Data required by a district to create its first director. The password is forwarded
+/// only in memory over the authenticated service call; Control never persists or audits it.
 /// </summary>
-public sealed record CreateDirectorRequest(string FullName, string Email);
+public sealed record CreateDirectorRequest(string FullName, string Email, string Password)
+{
+    public override string ToString() =>
+        $"{nameof(CreateDirectorRequest)} {{ FullName = [REDACTED], Email = [REDACTED], Password = [REDACTED] }}";
+}
 
 /// <summary>The district's acknowledgement that a director now exists.</summary>
 public sealed record DirectorCreationAcknowledged(string DirectorId);
@@ -37,14 +39,13 @@ public interface IDistrictClient
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Asks the district to reset the named director's password. EcoBilling owns
-    /// generating and delivering the new credential -- this call carries no password in
-    /// either direction, only the identity of which director to reset (Stage 8, section
-    /// 9.5, mirroring section 9.4's rule for CreateDirector).
+    /// Asks the district to replace the named director's password with the supplied value.
+    /// The password is forwarded only and must never be persisted or audited by Control.
     /// </summary>
     Task<Result> ResetDirectorPasswordAsync(
         District district,
         string directorEmail,
+        string newPassword,
         string idempotencyKey,
         CancellationToken cancellationToken);
 }

@@ -270,7 +270,7 @@ public sealed class AdministratorTests
     }
 
     [Fact]
-    public void PasswordHashCannotBeChangedThroughAnyPublicMethod()
+    public void PasswordHashCannotBeChangedThroughAPropertySetter()
     {
         // Never returned through any API response (brief's mandate). This proves there
         // is also no public mutator for it beyond construction -- the only way it
@@ -281,5 +281,22 @@ public sealed class AdministratorTests
             .ToList();
 
         Assert.Empty(mutators);
+    }
+
+    [Fact]
+    public void ResetPassword_ReplacesTheHashAndClearsLockoutState()
+    {
+        var administrator = NewAdministrator();
+        Fail(administrator, times: 5, at: Later);
+
+        administrator.ResetPassword("new-password-hash", Later.AddMinutes(1));
+
+        Assert.Equal("new-password-hash", administrator.PasswordHash);
+        Assert.False(administrator.IsLockedOut(Later.AddMinutes(1)));
+        Assert.Equal(0, administrator.FailedLoginAttempts);
+        Assert.Equal(0, administrator.ConsecutiveLockouts);
+        Assert.Null(administrator.LockedUntil);
+        Assert.Null(administrator.LastFailedLoginAt);
+        Assert.Equal(Later.AddMinutes(1), administrator.UpdatedAt);
     }
 }

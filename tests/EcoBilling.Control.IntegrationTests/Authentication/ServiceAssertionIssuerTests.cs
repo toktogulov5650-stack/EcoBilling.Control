@@ -8,33 +8,33 @@ using Microsoft.IdentityModel.Tokens;
 namespace EcoBilling.Control.IntegrationTests.Authentication;
 
 /// <summary>
-/// Verifies the ES256 service-assertion issuer (Stage 8, section 9.1) and that a
+/// Verifies the RS256 service-assertion issuer and that a
 /// validator holding only the public key -- exactly what a district's EcoBilling
 /// instance would be configured with -- can actually verify the result. No PostgreSQL
 /// needed.
 /// </summary>
 public sealed class ServiceAssertionIssuerTests
 {
-    private const string SigningKeyPem = """
-        -----BEGIN EC PRIVATE KEY-----
-        MHcCAQEEIM/Zmsn7TVLlASCs4fwrBHO+Z4+RMX0S/798BLR39S9soAoGCCqGSM49
-        AwEHoUQDQgAErNpguOsMTV/j7ZfEW7Y4Lbtbl1gwdXQ7kEB9ZQWhTxZDRvANZoN2
-        9tsaUpXl4W92V86YoF+I9ffOdEDkDNVhYA==
-        -----END EC PRIVATE KEY-----
-        """;
-
-    private const string DifferentSigningKeyPem = """
-        -----BEGIN EC PRIVATE KEY-----
-        MHcCAQEEIO0Wkr0UbCJN3852iE/OXtg+8EsHU8eSBaQFuhGRGXBnoAoGCCqGSM49
-        AwEHoUQDQgAERC2AP+zeqttPfasTouGTjFaCIwwB/hZzxUBrQTEb5+hVRv6unIc7
-        buMEeXK1vvmdeQBzDF9YcOhFsqFiuH9dKg==
-        -----END EC PRIVATE KEY-----
-        """;
+    private static readonly string SigningKeyPem = CreatePrivateKeyPem();
+    private static readonly string DifferentSigningKeyPem = CreatePrivateKeyPem();
 
     private static readonly DateTimeOffset Now = new(2026, 9, 25, 10, 0, 0, TimeSpan.Zero);
 
     private static ServiceAssertionIssuer NewIssuer(ServiceAssertionOptions? options = null) =>
-        new(Options.Create(options ?? new ServiceAssertionOptions { SigningKeyPem = SigningKeyPem }));
+        new(Options.Create(options ?? NewOptions(SigningKeyPem)));
+
+    private static ServiceAssertionOptions NewOptions(string signingKeyPem) => new()
+    {
+        SigningKeyPem = signingKeyPem,
+        KeyId = "test-key-1",
+        Scope = "ecobilling.directors.provision"
+    };
+
+    private static string CreatePrivateKeyPem()
+    {
+        using var rsa = RSA.Create(2048);
+        return rsa.ExportPkcs8PrivateKeyPem();
+    }
 
     private static District NewDistrict(string code = "BISHKEK-01") =>
         District.Create(
@@ -44,17 +44,16 @@ public sealed class ServiceAssertionIssuerTests
             TrustedApiUrl.Create("https://district-01.example.com/api").Value,
             Now).Value;
 
-    private static ECDsa PublicKeyOnly(string pem)
+    private static RSA PublicKeyOnly(string pem)
     {
-        var ecdsa = ECDsa.Create();
-        ecdsa.ImportFromPem(pem);
+        using var rsa = RSA.Create();
+        rsa.ImportFromPem(pem);
 
         // A district only ever holds Control's PUBLIC key (Stage 8, section 9.1) -- this
         // round-trips through the exported public parameters so the validation test
         // below cannot accidentally rely on also having the private key.
-        var publicOnly = ECDsa.Create();
-        publicOnly.ImportParameters(new ECParameters { Curve = ecdsa.ExportParameters(false).Curve, Q = ecdsa.ExportParameters(false).Q });
-        ecdsa.Dispose();
+        var publicOnly = RSA.Create();
+        publicOnly.ImportParameters(rsa.ExportParameters(false));
 
         return publicOnly;
     }
@@ -62,7 +61,9 @@ public sealed class ServiceAssertionIssuerTests
     [Fact]
     public void Issue_ProducesATokenThatValidatesAgainstOnlyThePublicKey()
     {
-        var issuer = NewIssuer(new ServiceAssertionOptions { SigningKeyPem = SigningKeyPem, Issuer = "ecobilling-control" });
+        var options = NewOptions(SigningKeyPem);
+        options.Issuer = "ecobilling-control";
+        var issuer = NewIssuer(options);
         var district = NewDistrict();
         var now = DateTimeOffset.UtcNow; // real time: ValidateToken checks expiry against the system clock.
 
@@ -78,12 +79,16 @@ public sealed class ServiceAssertionIssuerTests
             ValidateAudience = true,
             ValidAudience = district.NormalizedCode,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new ECDsaSecurityKey(publicKey),
+            IssuerSigningKey = new RsaSecurityKey(publicKey) { KeyId = "test-key-1" },
+            ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
             ValidateLifetime = true,
         }, out _);
 
         Assert.Equal("ecobilling-control", principal.FindFirst(JwtRegisteredClaimNames.Sub)!.Value);
         Assert.NotNull(principal.FindFirst(JwtRegisteredClaimNames.Jti));
+        Assert.NotNull(principal.FindFirst(JwtRegisteredClaimNames.Iat));
+        Assert.Equal("ecobilling.directors.provision", principal.FindFirst("scope")!.Value);
+        Assert.Equal("test-key-1", handler.ReadJwtToken(token).Header.Kid);
     }
 
     [Fact]
@@ -106,7 +111,7 @@ public sealed class ServiceAssertionIssuerTests
             ValidateAudience = true,
             ValidAudience = otherDistrict.NormalizedCode,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new ECDsaSecurityKey(publicKey),
+            IssuerSigningKey = new RsaSecurityKey(publicKey) { KeyId = "test-key-1" },
             ValidateLifetime = false,
         }, out _));
     }
@@ -114,7 +119,9 @@ public sealed class ServiceAssertionIssuerTests
     [Fact]
     public void Issue_SetsExpiryAccordingToTheConfiguredLifetime()
     {
-        var issuer = NewIssuer(new ServiceAssertionOptions { SigningKeyPem = SigningKeyPem, LifetimeMinutes = 2 });
+        var options = NewOptions(SigningKeyPem);
+        options.LifetimeMinutes = 2;
+        var issuer = NewIssuer(options);
         var token = issuer.Issue(NewDistrict(), Now);
 
         var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
@@ -145,7 +152,7 @@ public sealed class ServiceAssertionIssuerTests
     [Fact]
     public void ATokenSignedWithADifferentKey_FailsValidation()
     {
-        var issuer = NewIssuer(new ServiceAssertionOptions { SigningKeyPem = SigningKeyPem });
+        var issuer = NewIssuer(NewOptions(SigningKeyPem));
         var token = issuer.Issue(NewDistrict(), Now);
 
         using var wrongPublicKey = PublicKeyOnly(DifferentSigningKeyPem);
@@ -156,7 +163,7 @@ public sealed class ServiceAssertionIssuerTests
             ValidateIssuer = false,
             ValidateAudience = false,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new ECDsaSecurityKey(wrongPublicKey),
+            IssuerSigningKey = new RsaSecurityKey(wrongPublicKey) { KeyId = "test-key-1" },
             ValidateLifetime = false,
         }, out _));
     }

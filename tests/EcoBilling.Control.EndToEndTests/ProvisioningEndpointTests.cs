@@ -36,7 +36,7 @@ public sealed class ProvisioningEndpointTests : IDisposable
 
     public ProvisioningEndpointTests(DatabaseFixture database)
     {
-        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        _factory = TestApplicationFactory.Create().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("ConnectionStrings:Database", database.ConnectionString);
             builder.UseSetting("Authentication:Jwt:SigningKey", "e2e-test-signing-key-at-least-32-bytes-long-hmac");
@@ -67,7 +67,7 @@ public sealed class ProvisioningEndpointTests : IDisposable
         }
 
         public Task<Result> ResetDirectorPasswordAsync(
-            District district, string directorEmail, string idempotencyKey, CancellationToken cancellationToken) =>
+            District district, string directorEmail, string newPassword, string idempotencyKey, CancellationToken cancellationToken) =>
             Task.FromResult(ResetDirectorPasswordResponder(directorEmail));
     }
 
@@ -141,7 +141,7 @@ public sealed class ProvisioningEndpointTests : IDisposable
 
         var response = await client.SendAsync(Authorized(
             HttpMethod.Post, $"/api/v1/admin/districts/{district.Id.Value}/directors", accessToken,
-            new CreateDirectorHttpRequest("New Director", "director@prov-01.example.com")));
+            new CreateDirectorHttpRequest("New Director", "director@prov-01.example.com", "DirectorPass123!")));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await response.Content.ReadFromJsonAsync<CreateDirectorHttpResponse>();
@@ -184,7 +184,7 @@ public sealed class ProvisioningEndpointTests : IDisposable
 
         var response = await client.SendAsync(Authorized(
             HttpMethod.Post, $"/api/v1/admin/districts/{district.Id.Value}/directors", accessToken,
-            new CreateDirectorHttpRequest("New Director", "director@prov-01.example.com")));
+            new CreateDirectorHttpRequest("New Director", "director@prov-01.example.com", "DirectorPass123!")));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode); // district.inactive maps to 404, same as district.not_found.
         Assert.Equal(0, _districtClient.CreateDirectorCallCount);
@@ -200,12 +200,12 @@ public sealed class ProvisioningEndpointTests : IDisposable
 
         var firstResponse = await client.SendAsync(Authorized(
             HttpMethod.Post, $"/api/v1/admin/districts/{district.Id.Value}/directors", accessToken,
-            new CreateDirectorHttpRequest("First Director", "director@prov-01.example.com")));
+            new CreateDirectorHttpRequest("First Director", "director@prov-01.example.com", "DirectorPass123!")));
         Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
 
         var secondResponse = await client.SendAsync(Authorized(
             HttpMethod.Post, $"/api/v1/admin/districts/{district.Id.Value}/directors", accessToken,
-            new CreateDirectorHttpRequest("Second Director", "another@prov-01.example.com")));
+            new CreateDirectorHttpRequest("Second Director", "another@prov-01.example.com", "DirectorPass456!")));
 
         Assert.Equal(HttpStatusCode.Conflict, secondResponse.StatusCode);
         Assert.Equal(1, _districtClient.CreateDirectorCallCount); // the second request never reached the district client.
@@ -221,7 +221,7 @@ public sealed class ProvisioningEndpointTests : IDisposable
 
         var response = await client.SendAsync(Authorized(
             HttpMethod.Post, $"/api/v1/admin/districts/{district.Id.Value}/directors/reset-password", accessToken,
-            new ResetDirectorPasswordHttpRequest("director@prov-01.example.com")));
+            new ResetDirectorPasswordHttpRequest("director@prov-01.example.com", "NewDirectorPass123!")));
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
 

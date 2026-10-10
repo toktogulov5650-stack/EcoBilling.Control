@@ -6,7 +6,7 @@ public sealed class ServiceAssertionOptions
     public const string SectionName = "ServiceAuth:Jwt";
 
     /// <summary>
-    /// The ES256 private signing key, PEM-encoded. No default: <see cref="ServiceAssertionIssuer"/>
+    /// The RS256 private signing key, PEM-encoded. No default: <see cref="ServiceAssertionIssuer"/>
     /// throws at startup if this is missing, the same way <c>JwtOptions.SigningKey</c>
     /// (Stage 6) is treated. Never a real value in appsettings.json. Asymmetric, not
     /// symmetric like the administrator-login JWT (Stage 6): the verifier here is a
@@ -17,6 +17,10 @@ public sealed class ServiceAssertionOptions
     public string SigningKeyPem { get; set; } = string.Empty;
 
     public string Issuer { get; set; } = "ecobilling-control";
+
+    public string KeyId { get; set; } = string.Empty;
+
+    public string Scope { get; set; } = "ecobilling.directors.provision";
 
     /// <summary>Service-assertion lifetime (Stage 8, section 9.1: 2 minutes, confirmed).</summary>
     public int LifetimeMinutes { get; set; } = 2;

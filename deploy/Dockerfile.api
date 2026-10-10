@@ -1,12 +1,16 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
-RUN dotnet restore EcoBilling.Control.slnx
+RUN dotnet restore src/EcoBilling.Control.Api/EcoBilling.Control.Api.csproj
+RUN dotnet restore src/EcoBilling.Control.Provisioning/EcoBilling.Control.Provisioning.csproj
 RUN dotnet publish src/EcoBilling.Control.Api/EcoBilling.Control.Api.csproj -c Release -o /app/publish --no-restore
+RUN dotnet publish src/EcoBilling.Control.Provisioning/EcoBilling.Control.Provisioning.csproj -c Release -o /app/tools --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
+COPY --from=build /app/tools ./tools
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
+USER $APP_UID
 ENTRYPOINT ["dotnet", "EcoBilling.Control.Api.dll"]
