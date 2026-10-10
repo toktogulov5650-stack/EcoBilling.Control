@@ -40,7 +40,9 @@ public sealed class CreateDirectorHandler(
             return await FailWithoutOperationAsync(command, DistrictErrors.Inactive, now, cancellationToken);
         }
 
-        if (string.IsNullOrWhiteSpace(command.FullName) || string.IsNullOrWhiteSpace(command.Email))
+        if (string.IsNullOrWhiteSpace(command.FullName) ||
+            string.IsNullOrWhiteSpace(command.Email) ||
+            string.IsNullOrWhiteSpace(command.Password))
         {
             return await FailWithoutOperationAsync(command, ProvisioningOperationErrors.ValidationFailed, now, cancellationToken);
         }
@@ -68,7 +70,10 @@ public sealed class CreateDirectorHandler(
         operation.RecordAttemptStarted(now);
 
         var clientResult = await districtClient.CreateDirectorAsync(
-            district, new CreateDirectorRequest(command.FullName, command.Email), operation.IdempotencyKey, cancellationToken);
+            district,
+            new CreateDirectorRequest(command.FullName, command.Email, command.Password),
+            operation.IdempotencyKey,
+            cancellationToken);
 
         if (clientResult.IsFailure)
         {

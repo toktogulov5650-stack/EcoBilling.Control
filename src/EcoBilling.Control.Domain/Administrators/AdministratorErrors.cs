@@ -21,6 +21,10 @@ public static class AdministratorErrors
         "administrator.email_conflict",
         "An administrator with this email already exists.");
 
+    public static readonly Error NotFound = new(
+        "administrator.not_found",
+        "The administrator account was not found.");
+
     // Deliberately never returned by the login endpoint itself (see AdministratorLoginHandler):
     // unknown email, wrong password and an inactive account all collapse onto
     // InvalidCredentials at the API boundary, so a caller cannot distinguish which one

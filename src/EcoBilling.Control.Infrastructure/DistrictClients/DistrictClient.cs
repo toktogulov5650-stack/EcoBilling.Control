@@ -30,7 +30,7 @@ public sealed class DistrictClient(
     {
         using var httpRequest = BuildRequest(
             HttpMethod.Post, district, "/internal/v1/directors", idempotencyKey,
-            new { fullName = request.FullName, email = request.Email });
+            new { fullName = request.FullName, email = request.Email, password = request.Password });
 
         HttpResponseMessage response;
 
@@ -69,11 +69,15 @@ public sealed class DistrictClient(
     }
 
     public async Task<Result> ResetDirectorPasswordAsync(
-        District district, string directorEmail, string idempotencyKey, CancellationToken cancellationToken)
+        District district,
+        string directorEmail,
+        string newPassword,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
     {
         using var httpRequest = BuildRequest(
             HttpMethod.Post, district, "/internal/v1/directors/reset-password", idempotencyKey,
-            new { email = directorEmail });
+            new { email = directorEmail, newPassword });
 
         HttpResponseMessage response;
 

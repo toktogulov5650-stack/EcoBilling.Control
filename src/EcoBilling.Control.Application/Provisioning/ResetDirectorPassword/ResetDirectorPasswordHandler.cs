@@ -41,7 +41,8 @@ public sealed class ResetDirectorPasswordHandler(
             return await FailWithoutOperationAsync(command, DistrictErrors.Inactive, now, cancellationToken);
         }
 
-        if (string.IsNullOrWhiteSpace(command.DirectorEmail))
+        if (string.IsNullOrWhiteSpace(command.Email) ||
+            string.IsNullOrWhiteSpace(command.NewPassword))
         {
             return await FailWithoutOperationAsync(command, ProvisioningOperationErrors.ValidationFailed, now, cancellationToken);
         }
@@ -66,7 +67,7 @@ public sealed class ResetDirectorPasswordHandler(
         operation.RecordAttemptStarted(now);
 
         var clientResult = await districtClient.ResetDirectorPasswordAsync(
-            district, command.DirectorEmail, operation.IdempotencyKey, cancellationToken);
+            district, command.Email, command.NewPassword, operation.IdempotencyKey, cancellationToken);
 
         if (clientResult.IsFailure)
         {
@@ -86,7 +87,7 @@ public sealed class ResetDirectorPasswordHandler(
             {
                 operationId = operation.Id.Value,
                 status = operation.Status.ToString(),
-                directorEmail = command.DirectorEmail,
+                directorEmail = command.Email,
             }),
             CorrelationId: null,
             IpAddress: null,
@@ -109,7 +110,7 @@ public sealed class ResetDirectorPasswordHandler(
             "ProvisioningOperation",
             EntityId: null,
             BeforeData: null,
-            AfterData: JsonSerializer.Serialize(new { attemptedDirectorEmail = command.DirectorEmail, errorCode = error.Code }),
+            AfterData: JsonSerializer.Serialize(new { attemptedDirectorEmail = command.Email, errorCode = error.Code }),
             CorrelationId: null,
             IpAddress: null,
             UserAgent: null,

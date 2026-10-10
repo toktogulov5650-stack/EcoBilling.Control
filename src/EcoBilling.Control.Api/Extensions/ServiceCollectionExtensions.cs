@@ -31,8 +31,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Http.Resilience;
-using Microsoft.IdentityModel.Tokens;
 using Polly;
+using Microsoft.IdentityModel.Tokens;
 
 namespace EcoBilling.Control.Api.Extensions;
 
@@ -80,7 +80,12 @@ public static class ServiceCollectionExtensions
                 "Set it via configuration or the ConnectionStrings__Database environment variable; " +
                 "never commit a real one to appsettings.json.");
 
-        services.AddDbContext<ControlDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddDbContext<ControlDbContext>(options => options.UseNpgsql(
+            connectionString,
+            npgsql => npgsql.EnableRetryOnFailure(
+                maxRetryCount: 3,
+                maxRetryDelay: TimeSpan.FromSeconds(5),
+                errorCodesToAdd: null)));
         services.AddScoped<IDistrictRepository, DistrictRepository>();
         services.AddScoped<IAdministratorRepository, AdministratorRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
@@ -108,26 +113,25 @@ public static class ServiceCollectionExtensions
                 "Set it via configuration or an environment variable; never commit a real one to appsettings.json.");
         }
 
+
+        if (string.IsNullOrWhiteSpace(serviceAuthOptions.KeyId) ||
+            string.IsNullOrWhiteSpace(serviceAuthOptions.Scope))
+        {
+            throw new InvalidOperationException(
+                $"Configuration '{ServiceAssertionOptions.SectionName}:KeyId' and ':Scope' is required.");
+        }
+
         services.Configure<ServiceAssertionOptions>(configuration.GetSection(ServiceAssertionOptions.SectionName));
         services.AddSingleton<IServiceAssertionIssuer, ServiceAssertionIssuer>();
         services.AddScoped<IDistrictClient, DistrictClient>();
 
+        // A service assertion is deliberately single-use. Retrying the same
+        // HttpRequestMessage would replay its JWT and be rejected by EcoBilling.
+        // A caller-level retry creates a fresh token while preserving the operation's
+        // idempotency key, which is the safe retry boundary.
         services.AddHttpClient(DistrictClient.HttpClientName)
             .AddResilienceHandler("district-client", builder =>
-            {
-                builder.AddRetry(new HttpRetryStrategyOptions
-                {
-                    MaxRetryAttempts = 2, // + the first attempt = 3 attempts total.
-                    BackoffType = DelayBackoffType.Exponential,
-                    Delay = TimeSpan.FromSeconds(1),
-                    UseJitter = true,
-                });
-
-                // Inside the retry (added second = inner), so every individual attempt
-                // -- including each retry -- gets its own fresh 10-second budget, rather
-                // than one 10-second budget shared across all 3 attempts.
-                builder.AddTimeout(TimeSpan.FromSeconds(10));
-            });
+                builder.AddTimeout(TimeSpan.FromSeconds(10)));
 
         return services;
     }

@@ -132,6 +132,23 @@ public sealed class Administrator
     }
 
     /// <summary>
+    /// Replaces the already-hashed password during an explicitly authorized provisioning
+    /// operation and clears lockout state so the administrator can sign in immediately.
+    /// Raw passwords never enter the domain entity.
+    /// </summary>
+    public void ResetPassword(string passwordHash, DateTimeOffset now)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(passwordHash);
+
+        PasswordHash = passwordHash;
+        FailedLoginAttempts = 0;
+        ConsecutiveLockouts = 0;
+        LockedUntil = null;
+        LastFailedLoginAt = null;
+        UpdatedAt = now;
+    }
+
+    /// <summary>
     /// Records a failed login attempt. A no-op while already locked out (Stage 10,
     /// deliberate: an attacker hammering the endpoint during an active lockout must not
     /// be able to extend it or advance escalation further -- the same reasoning that

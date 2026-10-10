@@ -26,7 +26,7 @@ public interface IServiceAssertionIssuer
 }
 
 /// <summary>
-/// ES256 (asymmetric), not the HMAC-SHA256 the administrator-login JWT uses (Stage 6):
+/// RS256 (asymmetric), not the HMAC-SHA256 the administrator-login JWT uses (Stage 6):
 /// the verifier here is a different process -- a district's own EcoBilling instance --
 /// which must be able to check Control's signature without ever holding a secret that
 /// could itself mint a valid assertion. Rotation is manual for now (Stage 8, section
@@ -38,8 +38,8 @@ public interface IServiceAssertionIssuer
 public sealed class ServiceAssertionIssuer : IServiceAssertionIssuer, IDisposable
 {
     private readonly ServiceAssertionOptions _options;
-    private readonly ECDsa _ecdsa;
-    private readonly ECDsaSecurityKey _signingKey;
+    private readonly RSA _rsa;
+    private readonly RsaSecurityKey _signingKey;
 
     public ServiceAssertionIssuer(IOptions<ServiceAssertionOptions> options)
     {
@@ -52,9 +52,21 @@ public sealed class ServiceAssertionIssuer : IServiceAssertionIssuer, IDisposabl
                 "Set it via configuration or an environment variable; never commit a real one to appsettings.json.");
         }
 
-        _ecdsa = ECDsa.Create();
-        _ecdsa.ImportFromPem(_options.SigningKeyPem);
-        _signingKey = new ECDsaSecurityKey(_ecdsa);
+        if (string.IsNullOrWhiteSpace(_options.KeyId))
+        {
+            throw new InvalidOperationException(
+                $"Missing required configuration '{ServiceAssertionOptions.SectionName}:KeyId'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.Scope))
+        {
+            throw new InvalidOperationException(
+                $"Missing required configuration '{ServiceAssertionOptions.SectionName}:Scope'.");
+        }
+
+        _rsa = RSA.Create();
+        _rsa.ImportFromPem(_options.SigningKeyPem);
+        _signingKey = new RsaSecurityKey(_rsa) { KeyId = _options.KeyId };
     }
 
     public string Issue(District district, DateTimeOffset now)
@@ -68,6 +80,11 @@ public sealed class ServiceAssertionIssuer : IServiceAssertionIssuer, IDisposabl
             // minutes; a district MAY additionally track recently-seen jti values for
             // stricter single-use enforcement within that window, but is not required to.
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(
+                JwtRegisteredClaimNames.Iat,
+                now.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ClaimValueTypes.Integer64),
+            new Claim("scope", _options.Scope),
         };
 
         var token = new JwtSecurityToken(
@@ -76,10 +93,10 @@ public sealed class ServiceAssertionIssuer : IServiceAssertionIssuer, IDisposabl
             claims,
             notBefore: now.UtcDateTime,
             expires: expiresAt.UtcDateTime,
-            signingCredentials: new SigningCredentials(_signingKey, SecurityAlgorithms.EcdsaSha256));
+            signingCredentials: new SigningCredentials(_signingKey, SecurityAlgorithms.RsaSha256));
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    public void Dispose() => _ecdsa.Dispose();
+    public void Dispose() => _rsa.Dispose();
 }

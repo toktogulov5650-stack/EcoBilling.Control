@@ -23,6 +23,8 @@ public static class AuditActions
     public const string AdministratorSessionReuseDetected = "administrator.session_reuse_detected";
     public const string AdministratorCreated = "administrator.created";
     public const string AdministratorCreateFailed = "administrator.create_failed";
+    public const string AdministratorPasswordReset = "administrator.password_reset";
+    public const string AdministratorPasswordResetFailed = "administrator.password_reset_failed";
 
     public const string ProvisioningDirectorCreationSucceeded = "provisioning.director_creation_succeeded";
     public const string ProvisioningDirectorCreationFailed = "provisioning.director_creation_failed";

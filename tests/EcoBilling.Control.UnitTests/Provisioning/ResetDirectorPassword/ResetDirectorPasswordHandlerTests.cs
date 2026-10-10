@@ -52,7 +52,7 @@ public sealed class ResetDirectorPasswordHandlerTests
         var fixture = NewFixture();
 
         var result = await fixture.Handler.HandleAsync(
-            new ResetDirectorPasswordCommand(DistrictId.New(), "director@example.com", Caller), CancellationToken.None);
+            new ResetDirectorPasswordCommand(DistrictId.New(), "director@example.com", "NewDirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("district.not_found", result.Error.Code);
@@ -68,10 +68,25 @@ public sealed class ResetDirectorPasswordHandlerTests
         var district = NewActiveDistrict(fixture.Districts);
 
         var result = await fixture.Handler.HandleAsync(
-            new ResetDirectorPasswordCommand(district.Id, email, Caller), CancellationToken.None);
+            new ResetDirectorPasswordCommand(district.Id, email, "NewDirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("validation.failed", result.Error.Code);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ReturnsValidationFailed_WhenNewPasswordIsMissing()
+    {
+        var fixture = NewFixture();
+        var district = NewActiveDistrict(fixture.Districts);
+
+        var result = await fixture.Handler.HandleAsync(
+            new ResetDirectorPasswordCommand(district.Id, "director@example.com", "   ", Caller),
+            CancellationToken.None);
+
+        Assert.True(result.IsFailure);
+        Assert.Equal("validation.failed", result.Error.Code);
+        Assert.Empty(fixture.DistrictClient.ResetDirectorPasswordCalls);
     }
 
     [Fact]
@@ -81,7 +96,7 @@ public sealed class ResetDirectorPasswordHandlerTests
         var district = NewActiveDistrict(fixture.Districts);
 
         var result = await fixture.Handler.HandleAsync(
-            new ResetDirectorPasswordCommand(district.Id, "director@example.com", Caller), CancellationToken.None);
+            new ResetDirectorPasswordCommand(district.Id, "director@example.com", "NewDirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         var operation = fixture.Operations.Added[0];
@@ -94,11 +109,13 @@ public sealed class ResetDirectorPasswordHandlerTests
 
         var call = Assert.Single(fixture.DistrictClient.ResetDirectorPasswordCalls);
         Assert.Equal("director@example.com", call.DirectorEmail);
+        Assert.Equal("NewDirectorPass123!", call.NewPassword);
         Assert.Equal(operation.IdempotencyKey, call.IdempotencyKey);
 
         // The audit trail records which director's password was reset -- without this,
         // an administrator reading the audit log would see only "a reset happened."
         Assert.Contains("director@example.com", entry.AfterData!);
+        Assert.DoesNotContain("NewDirectorPass123!", entry.AfterData!);
     }
 
     [Fact]
@@ -109,7 +126,7 @@ public sealed class ResetDirectorPasswordHandlerTests
         fixture.DistrictClient.ResetDirectorPasswordResult = Result.Failure(ProvisioningOperationErrors.DirectorNotFound);
 
         var result = await fixture.Handler.HandleAsync(
-            new ResetDirectorPasswordCommand(district.Id, "unknown@example.com", Caller), CancellationToken.None);
+            new ResetDirectorPasswordCommand(district.Id, "unknown@example.com", "NewDirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("director.not_found", result.Error.Code);
@@ -127,14 +144,14 @@ public sealed class ResetDirectorPasswordHandlerTests
         fixture.DistrictClient.ResetDirectorPasswordResult = Result.Failure(ProvisioningOperationErrors.DistrictUnavailable);
 
         await fixture.Handler.HandleAsync(
-            new ResetDirectorPasswordCommand(district.Id, "director@example.com", Caller), CancellationToken.None);
+            new ResetDirectorPasswordCommand(district.Id, "director@example.com", "NewDirectorPass123!", Caller), CancellationToken.None);
 
         var firstOperationId = fixture.Operations.Added[0].Id;
         var firstIdempotencyKey = fixture.Operations.Added[0].IdempotencyKey;
         fixture.DistrictClient.ResetDirectorPasswordResult = Result.Success();
 
         var result = await fixture.Handler.HandleAsync(
-            new ResetDirectorPasswordCommand(district.Id, "director@example.com", Caller), CancellationToken.None);
+            new ResetDirectorPasswordCommand(district.Id, "director@example.com", "NewDirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(firstOperationId, result.Value.OperationId);
@@ -152,12 +169,12 @@ public sealed class ResetDirectorPasswordHandlerTests
         var district = NewActiveDistrict(fixture.Districts);
 
         await fixture.Handler.HandleAsync(
-            new ResetDirectorPasswordCommand(district.Id, "director@example.com", Caller), CancellationToken.None);
+            new ResetDirectorPasswordCommand(district.Id, "director@example.com", "NewDirectorPass123!", Caller), CancellationToken.None);
         var firstOperation = fixture.Operations.Added[0];
         Assert.Equal(ProvisioningStatus.Completed, firstOperation.Status);
 
         var result = await fixture.Handler.HandleAsync(
-            new ResetDirectorPasswordCommand(district.Id, "director@example.com", Caller), CancellationToken.None);
+            new ResetDirectorPasswordCommand(district.Id, "director@example.com", "NewDirectorPass123!", Caller), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(2, fixture.Operations.Added.Count); // a genuinely new operation, not a rejection.

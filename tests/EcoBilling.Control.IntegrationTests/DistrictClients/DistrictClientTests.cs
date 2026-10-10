@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using EcoBilling.Control.Application.Abstractions;
 using EcoBilling.Control.Domain.Districts;
 using EcoBilling.Control.Infrastructure.Authentication;
@@ -24,13 +25,13 @@ namespace EcoBilling.Control.IntegrationTests.DistrictClients;
 /// </summary>
 public sealed class DistrictClientTests
 {
-    private const string SigningKeyPem = """
-        -----BEGIN EC PRIVATE KEY-----
-        MHcCAQEEIM/Zmsn7TVLlASCs4fwrBHO+Z4+RMX0S/798BLR39S9soAoGCCqGSM49
-        AwEHoUQDQgAErNpguOsMTV/j7ZfEW7Y4Lbtbl1gwdXQ7kEB9ZQWhTxZDRvANZoN2
-        9tsaUpXl4W92V86YoF+I9ffOdEDkDNVhYA==
-        -----END EC PRIVATE KEY-----
-        """;
+    private static readonly string SigningKeyPem = CreatePrivateKeyPem();
+
+    private static string CreatePrivateKeyPem()
+    {
+        using var rsa = RSA.Create(2048);
+        return rsa.ExportPkcs8PrivateKeyPem();
+    }
 
     private static readonly DateTimeOffset Now = new(2026, 9, 25, 10, 0, 0, TimeSpan.Zero);
 
@@ -71,7 +72,12 @@ public sealed class DistrictClientTests
     private static DistrictClient NewClient(HttpMessageHandler handler) =>
         new(
             new StubHttpClientFactory(handler),
-            new ServiceAssertionIssuer(Options.Create(new ServiceAssertionOptions { SigningKeyPem = SigningKeyPem })),
+            new ServiceAssertionIssuer(Options.Create(new ServiceAssertionOptions
+            {
+                SigningKeyPem = SigningKeyPem,
+                KeyId = "test-key-1",
+                Scope = "ecobilling.directors.provision"
+            })),
             new HttpContextAccessor(),
             new StubClock(Now));
 
@@ -91,13 +97,14 @@ public sealed class DistrictClientTests
         var district = NewDistrict();
         var client = NewClient(handler);
 
-        await client.CreateDirectorAsync(district, new CreateDirectorRequest("Director Name", "director@example.com"), "idem-key-1", CancellationToken.None);
+        await client.CreateDirectorAsync(district, new CreateDirectorRequest("Director Name", "director@example.com", "DirectorPass123!"), "idem-key-1", CancellationToken.None);
 
         Assert.NotNull(handler.LastRequest);
         Assert.Equal(HttpMethod.Post, handler.LastRequest.Method);
         Assert.Equal("https://district-01.example.com/api/internal/v1/directors", handler.LastRequest.RequestUri!.ToString());
         Assert.Contains("\"fullName\":\"Director Name\"", handler.LastRequestBody);
         Assert.Contains("\"email\":\"director@example.com\"", handler.LastRequestBody);
+        Assert.Contains("\"password\":\"DirectorPass123!\"", handler.LastRequestBody);
         Assert.Equal("idem-key-1", handler.LastRequest.Headers.GetValues("Idempotency-Key").Single());
         Assert.NotEmpty(handler.LastRequest.Headers.GetValues("X-Correlation-Id"));
 
@@ -105,6 +112,8 @@ public sealed class DistrictClientTests
         var jwt = new JwtSecurityTokenHandler().ReadJwtToken(handler.LastRequest.Headers.Authorization.Parameter);
         Assert.Equal("ecobilling-control", jwt.Issuer);
         Assert.Contains(district.NormalizedCode, jwt.Audiences);
+        Assert.Equal("test-key-1", jwt.Header.Kid);
+        Assert.Equal("ecobilling.directors.provision", jwt.Claims.Single(claim => claim.Type == "scope").Value);
     }
 
     [Fact]
@@ -115,7 +124,7 @@ public sealed class DistrictClientTests
         var client = NewClient(handler);
 
         var result = await client.CreateDirectorAsync(
-            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com"), "idem-key-1", CancellationToken.None);
+            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com", "DirectorPass123!"), "idem-key-1", CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal("director-1", result.Value.DirectorId);
@@ -132,7 +141,7 @@ public sealed class DistrictClientTests
         var client = NewClient(handler);
 
         var result = await client.CreateDirectorAsync(
-            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com"), "idem-key-1", CancellationToken.None);
+            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com", "DirectorPass123!"), "idem-key-1", CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal("director-1", result.Value.DirectorId);
@@ -146,7 +155,7 @@ public sealed class DistrictClientTests
         var client = NewClient(handler);
 
         var result = await client.CreateDirectorAsync(
-            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com"), "idem-key-1", CancellationToken.None);
+            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com", "DirectorPass123!"), "idem-key-1", CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("director.already_exists", result.Error.Code);
@@ -159,7 +168,7 @@ public sealed class DistrictClientTests
         var client = NewClient(handler);
 
         var result = await client.CreateDirectorAsync(
-            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com"), "idem-key-1", CancellationToken.None);
+            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com", "DirectorPass123!"), "idem-key-1", CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("service.unauthorized", result.Error.Code);
@@ -173,7 +182,7 @@ public sealed class DistrictClientTests
         var client = NewClient(handler);
 
         var result = await client.CreateDirectorAsync(
-            NewDistrict(), new CreateDirectorRequest("Director", "not-an-email"), "idem-key-1", CancellationToken.None);
+            NewDistrict(), new CreateDirectorRequest("Director", "not-an-email", "DirectorPass123!"), "idem-key-1", CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("validation.failed", result.Error.Code);
@@ -186,7 +195,7 @@ public sealed class DistrictClientTests
         var client = NewClient(handler);
 
         var result = await client.CreateDirectorAsync(
-            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com"), "idem-key-1", CancellationToken.None);
+            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com", "DirectorPass123!"), "idem-key-1", CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("district.unavailable", result.Error.Code);
@@ -198,7 +207,7 @@ public sealed class DistrictClientTests
         var client = NewClient(new ThrowingHandler(new HttpRequestException("connection refused")));
 
         var result = await client.CreateDirectorAsync(
-            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com"), "idem-key-1", CancellationToken.None);
+            NewDistrict(), new CreateDirectorRequest("Director", "director@example.com", "DirectorPass123!"), "idem-key-1", CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("district.unavailable", result.Error.Code);
@@ -211,11 +220,12 @@ public sealed class DistrictClientTests
             HttpStatusCode.Accepted, new { operationId = "op-2", status = "in_progress" }));
         var client = NewClient(handler);
 
-        var result = await client.ResetDirectorPasswordAsync(NewDistrict(), "director@example.com", "idem-key-2", CancellationToken.None);
+        var result = await client.ResetDirectorPasswordAsync(NewDistrict(), "director@example.com", "NewDirectorPass123!", "idem-key-2", CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.Equal("https://district-01.example.com/api/internal/v1/directors/reset-password", handler.LastRequest!.RequestUri!.ToString());
         Assert.Contains("\"email\":\"director@example.com\"", handler.LastRequestBody);
+        Assert.Contains("\"newPassword\":\"NewDirectorPass123!\"", handler.LastRequestBody);
         Assert.Equal("idem-key-2", handler.LastRequest.Headers.GetValues("Idempotency-Key").Single());
     }
 
@@ -226,7 +236,7 @@ public sealed class DistrictClientTests
             HttpStatusCode.NotFound, new { code = "director.not_found", message = "No such director." }));
         var client = NewClient(handler);
 
-        var result = await client.ResetDirectorPasswordAsync(NewDistrict(), "unknown@example.com", "idem-key-2", CancellationToken.None);
+        var result = await client.ResetDirectorPasswordAsync(NewDistrict(), "unknown@example.com", "NewDirectorPass123!", "idem-key-2", CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("director.not_found", result.Error.Code);
