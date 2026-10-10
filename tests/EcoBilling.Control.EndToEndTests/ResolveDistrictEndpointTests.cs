@@ -28,7 +28,7 @@ public sealed class ResolveDistrictEndpointTests : IDisposable
 
     public ResolveDistrictEndpointTests(DatabaseFixture database)
     {
-        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        _factory = TestApplicationFactory.Create().WithWebHostBuilder(builder =>
             builder.UseSetting("ConnectionStrings:Database", database.ConnectionString));
     }
 

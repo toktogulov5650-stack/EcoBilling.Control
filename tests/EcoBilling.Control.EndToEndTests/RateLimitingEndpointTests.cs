@@ -20,7 +20,7 @@ public sealed class RateLimitingEndpointTests : IDisposable
 
     public RateLimitingEndpointTests(DatabaseFixture database)
     {
-        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        _factory = TestApplicationFactory.Create().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("ConnectionStrings:Database", database.ConnectionString);
             builder.UseSetting("Authentication:Jwt:SigningKey", "e2e-test-signing-key-at-least-32-bytes-long-hmac");
